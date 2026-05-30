@@ -17,6 +17,7 @@ the record and log the failure. Process stays alive regardless.
 Managed by systemd — see deploy/db_writer.service
 """
 
+import os
 import paho.mqtt.client as mqtt
 import sqlite3
 import json
@@ -35,7 +36,8 @@ MQTT_HOST       = "localhost"
 MQTT_PORT       = 1883
 MQTT_TOPIC_BASE = "maverick/telemetry"
 
-DB_PATH         = Path("/home/pi/maverick_telemetry.db")
+_default_db = Path(__file__).resolve().parent / "maverick_telemetry.db"
+DB_PATH     = Path(os.environ.get("MAVERICK_DB_PATH", _default_db))
 
 MAX_RETRIES     = 3
 RETRY_DELAY     = 0.5  # seconds between retries
@@ -117,25 +119,30 @@ def handle_reading(conn: sqlite3.Connection, payload: dict) -> None:
             """
             INSERT INTO readings (
                 trip_id, ts, rpm, speed_mph, coolant_temp_f,
-                throttle_pct, battery_soc_pct, ev_mode,
-                regen_kw, fuel_rate_gph
+                throttle_pct, battery_soc_pct, ev_mode, regen_kw,
+                fuel_rate_gph, pack_voltage_v, battery_current_a,
+                motor_speed_rpm
             ) VALUES (
                 :trip_id, :ts, :rpm, :speed_mph, :coolant_temp_f,
-                :throttle_pct, :battery_soc_pct, :ev_mode,
-                :regen_kw, :fuel_rate_gph
+                :throttle_pct, :battery_soc_pct, :ev_mode, :regen_kw,
+                :fuel_rate_gph, :pack_voltage_v, :battery_current_a,
+                :motor_speed_rpm
             )
             """,
             {
-                "trip_id":         trip_id,
-                "ts":              payload.get("ts"),
-                "rpm":             payload.get("rpm"),
-                "speed_mph":       payload.get("speed_mph"),
-                "coolant_temp_f":  payload.get("coolant_temp_f"),
-                "throttle_pct":    payload.get("throttle_pct"),
-                "battery_soc_pct": payload.get("battery_soc_pct"),
-                "ev_mode":         payload.get("ev_mode"),
-                "regen_kw":        payload.get("regen_kw"),
-                "fuel_rate_gph":   payload.get("fuel_rate_gph"),
+                "trip_id":          trip_id,
+                "ts":               payload.get("ts"),
+                "rpm":              payload.get("rpm"),
+                "speed_mph":        payload.get("speed_mph"),
+                "coolant_temp_f":   payload.get("coolant_temp_f"),
+                "throttle_pct":     payload.get("throttle_pct"),
+                "battery_soc_pct":  payload.get("battery_soc_pct"),
+                "ev_mode":          payload.get("ev_mode"),
+                "regen_kw":         payload.get("regen_kw"),
+                "fuel_rate_gph":    payload.get("fuel_rate_gph"),
+                "pack_voltage_v":   payload.get("pack_voltage_v"),
+                "battery_current_a": payload.get("battery_current_a"),
+                "motor_speed_rpm":  payload.get("motor_speed_rpm"),
             },
         )
         conn.commit()

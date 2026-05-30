@@ -36,15 +36,27 @@ logging.basicConfig(
 log = logging.getLogger("migrate")
 
 # ---------------------------------------------------------------------------
-# Schema
+# Migrations
 # ---------------------------------------------------------------------------
+# Each key is a schema version integer; value is the SQL to apply.
+# V1 uses CREATE IF NOT EXISTS so it is safe to run on a fresh DB.
+# V2+ use ALTER TABLE — SQLite ignores duplicate column errors via
+# the try/except in _apply_migration.
 
-SCHEMA = """
+VERSION_TABLE = """
+CREATE TABLE IF NOT EXISTS schema_version (
+    version     INTEGER PRIMARY KEY,
+    applied_at  TEXT NOT NULL
+);
+"""
+
+MIGRATIONS = {
+    1: """
 -- one row per ignition cycle
 CREATE TABLE IF NOT EXISTS trips (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     started_at       TEXT NOT NULL,
-    ended_at         TEXT,            -- null until ignition off
+    ended_at         TEXT,
     duration_seconds INTEGER,
     odometer_start   REAL,
     odometer_end     REAL,
@@ -61,9 +73,9 @@ CREATE TABLE IF NOT EXISTS readings (
     speed_mph       REAL,
     coolant_temp_f  REAL,
     throttle_pct    REAL,
-    battery_soc_pct REAL,    -- hybrid PID, nullable
-    ev_mode         INTEGER, -- 1/0, hybrid PID, nullable
-    regen_kw        REAL,    -- hybrid PID, nullable
+    battery_soc_pct REAL,
+    ev_mode         INTEGER,
+    regen_kw        REAL,
     fuel_rate_gph   REAL
 );
 
@@ -73,7 +85,7 @@ CREATE TABLE IF NOT EXISTS dtcs (
     trip_id          INTEGER NOT NULL REFERENCES trips(id),
     code             TEXT NOT NULL,
     first_seen_at    TEXT NOT NULL,
-    claude_diagnosis TEXT,    -- null until requested via dashboard
+    claude_diagnosis TEXT,
     diagnosed_at     TEXT
 );
 
@@ -90,34 +102,23 @@ CREATE TABLE IF NOT EXISTS trip_summaries (
     min_battery_soc_pct  REAL
 );
 
--- indexes for common dashboard queries
-CREATE INDEX IF NOT EXISTS idx_readings_trip
-    ON readings(trip_id, ts);
+CREATE INDEX IF NOT EXISTS idx_readings_trip  ON readings(trip_id, ts);
+CREATE INDEX IF NOT EXISTS idx_trips_started  ON trips(started_at);
+CREATE INDEX IF NOT EXISTS idx_dtcs_code      ON dtcs(code);
+CREATE INDEX IF NOT EXISTS idx_dtcs_trip      ON dtcs(trip_id);
+""",
 
-CREATE INDEX IF NOT EXISTS idx_trips_started
-    ON trips(started_at);
+    2: """
+-- Raw hybrid sensor columns (Ford Mode 22 PIDs 480B, 480C, 4A15).
+-- Used to derive ev_mode and regen_kw in obd_poller; stored here for
+-- post-trip analysis without re-deriving from the computed fields.
+ALTER TABLE readings ADD COLUMN pack_voltage_v    REAL;
+ALTER TABLE readings ADD COLUMN battery_current_a REAL;
+ALTER TABLE readings ADD COLUMN motor_speed_rpm   INTEGER;
+""",
+}
 
-CREATE INDEX IF NOT EXISTS idx_dtcs_code
-    ON dtcs(code);
-
-CREATE INDEX IF NOT EXISTS idx_dtcs_trip
-    ON dtcs(trip_id);
-"""
-
-# ---------------------------------------------------------------------------
-# Migration tracking
-# ---------------------------------------------------------------------------
-# Simple version table so future schema changes can be applied
-# incrementally without dropping and recreating the database.
-
-VERSION_TABLE = """
-CREATE TABLE IF NOT EXISTS schema_version (
-    version     INTEGER PRIMARY KEY,
-    applied_at  TEXT NOT NULL
-);
-"""
-
-CURRENT_VERSION = 1
+CURRENT_VERSION = max(MIGRATIONS)
 
 # ---------------------------------------------------------------------------
 # Run
@@ -130,43 +131,52 @@ def get_schema_version(conn: sqlite3.Connection) -> int:
     return row[0] if row and row[0] is not None else 0
 
 
+def _apply_migration(conn: sqlite3.Connection, version: int, sql: str) -> None:
+    log.info(f"Applying migration v{version}...")
+    for statement in sql.strip().split(";"):
+        statement = statement.strip()
+        if not statement:
+            continue
+        try:
+            conn.execute(statement)
+        except sqlite3.OperationalError as e:
+            # ALTER TABLE ADD COLUMN fails if the column already exists;
+            # treat that as a no-op so re-runs are safe.
+            if "duplicate column" in str(e).lower():
+                log.debug(f"Column already exists, skipping: {e}")
+            else:
+                raise
+    conn.execute(
+        "INSERT INTO schema_version (version, applied_at) VALUES (?, datetime('now'))",
+        (version,),
+    )
+    conn.commit()
+    log.info(f"Migration v{version} applied")
+
+
 def run() -> None:
     log.info(f"Database path: {DB_PATH}")
 
-    # Create parent directory if it doesn't exist
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     conn = sqlite3.connect(DB_PATH)
 
     try:
-        # Enable WAL mode and foreign keys
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
-
-        # Create version tracking table first
         conn.executescript(VERSION_TABLE)
 
         current = get_schema_version(conn)
         log.info(f"Current schema version: {current}")
 
-        if current >= CURRENT_VERSION:
+        pending = [v for v in sorted(MIGRATIONS) if v > current]
+        if not pending:
             log.info("Schema is up to date — nothing to do")
             return
 
-        # Apply schema
-        log.info(f"Applying schema version {CURRENT_VERSION}...")
-        conn.executescript(SCHEMA)
+        for version in pending:
+            _apply_migration(conn, version, MIGRATIONS[version])
 
-        # Record the version
-        conn.execute(
-            "INSERT INTO schema_version (version, applied_at) VALUES (?, datetime('now'))",
-            (CURRENT_VERSION,),
-        )
-        conn.commit()
-
-        log.info(f"Schema version {CURRENT_VERSION} applied successfully")
-
-        # Confirm tables exist
         tables = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
         ).fetchall()

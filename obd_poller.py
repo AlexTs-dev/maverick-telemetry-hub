@@ -63,6 +63,7 @@ def _to_f(v):      return round(v.to("degF").magnitude, 1) if v else None
 def _to_pct(v):    return round(v.magnitude, 1) if v else None
 def _to_gph(v):    return round(v.magnitude, 3) if v else None
 def _passthrough(v): return v.magnitude if v else None
+def _raw(v):       return v  # decoder already returns a plain number
 
 STANDARD_PIDS = [
     (obd.commands.RPM,              "rpm",            _to_rpm),
@@ -72,14 +73,43 @@ STANDARD_PIDS = [
     (obd.commands.FUEL_RATE,        "fuel_rate_gph",  _to_gph),
 ]
 
-# Hybrid PIDs — Ford proprietary, may not be available.
-# These use raw mode 22 PIDs. Update hex addresses once confirmed
-# on the Maverick Truck Club forums for the 2026 FHEV.
-# Leaving as None placeholders until PIDs are confirmed.
+# ---------------------------------------------------------------------------
+# Ford Mode 22 (proprietary) hybrid PIDs
+# ---------------------------------------------------------------------------
+# Decoders receive a list of Message objects; data is a bytearray where:
+#   data[0]    = 0x62 (mode 22 positive response)
+#   data[1:3]  = PID echo bytes
+#   data[3:]   = payload
+
+def _m22_word_div100(messages):
+    d = messages[0].data
+    return round((d[3] * 256 + d[4]) / 100, 1)
+
+def _m22_word_div10(messages):
+    d = messages[0].data
+    return round((d[3] * 256 + d[4]) / 10, 2)
+
+def _m22_signed_div10(messages):
+    d = messages[0].data
+    return round(((d[3] * 256 + d[4]) - 32768) / 10, 2)
+
+def _m22_signed(messages):
+    d = messages[0].data
+    return (d[3] * 256 + d[4]) - 32768
+
+
+_CMD_HV_SOC    = obd.OBDCommand("HV_SOC",  "HV State of Charge",       b"224811", 2, _m22_word_div100)
+_CMD_PACK_V    = obd.OBDCommand("PACK_V",  "HV Pack Voltage",           b"22480B", 2, _m22_word_div10)
+_CMD_BATT_I    = obd.OBDCommand("BATT_I",  "HV Battery Current",        b"22480C", 2, _m22_signed_div10)
+_CMD_MOTOR_RPM = obd.OBDCommand("MG2_RPM", "Traction Motor Speed (MG2)", b"224A15", 2, _m22_signed)
+
+# battery_soc_pct is a direct read.
+# ev_mode and regen_kw are derived in poll_once from the raw sensor fields.
 HYBRID_PIDS = [
-    # (obd.commands.xxx, "battery_soc_pct", _to_pct),
-    # (obd.commands.xxx, "ev_mode",         _passthrough),
-    # (obd.commands.xxx, "regen_kw",        _passthrough),
+    (_CMD_HV_SOC,    "battery_soc_pct",   _raw),
+    (_CMD_PACK_V,    "pack_voltage_v",     _raw),
+    (_CMD_BATT_I,    "battery_current_a",  _raw),
+    (_CMD_MOTOR_RPM, "motor_speed_rpm",    _raw),
 ]
 
 ALL_PIDS = STANDARD_PIDS + HYBRID_PIDS
@@ -155,6 +185,24 @@ def poll_once(connection: obd.OBD) -> dict:
         except Exception as e:
             log.debug(f"PID error ({field}): {e}")
             reading[field] = None
+
+    # Derive ev_mode and regen_kw from the raw hybrid sensor readings
+    pack_v    = reading.get("pack_voltage_v")
+    batt_i    = reading.get("battery_current_a")
+    motor_rpm = reading.get("motor_speed_rpm")
+
+    # ev_mode: engine off (RPM near zero) while traction motor is spinning
+    engine_rpm = reading.get("rpm") or 0
+    reading["ev_mode"] = (
+        1 if (motor_rpm is not None and abs(motor_rpm) > 50 and engine_rpm < 100) else 0
+    )
+
+    # regen_kw: battery current is negative when the pack is charging (regen)
+    if pack_v is not None and batt_i is not None and batt_i < 0:
+        reading["regen_kw"] = round(pack_v * abs(batt_i) / 1000, 3)
+    else:
+        reading["regen_kw"] = 0.0
+
     return reading
 
 # ---------------------------------------------------------------------------

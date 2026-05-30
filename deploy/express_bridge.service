@@ -6,14 +6,14 @@
 
 [Unit]
 Description=Maverick Telemetry — Express Bridge
-Documentation=https://github.com/yourusername/maverick-telemetry
+Documentation=https://github.com/AlexTs-dev/maverick-telemetry-hub
 After=network.target mosquitto.service db_writer.service
 Requires=mosquitto.service
 
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/maverick-telemetry/server
+WorkingDirectory=/home/pi/maverick-telemetry-hub/server
 ExecStart=/usr/bin/node index.js
 
 Restart=always
@@ -26,10 +26,10 @@ SyslogIdentifier=express_bridge
 
 Environment=PYTHONUNBUFFERED=1
 Environment=NODE_ENV=production
-# Create /home/pi/maverick-telemetry/server/.env with:
+# Create /home/pi/maverick-telemetry-hub/server/.env with:
 # ANTHROPIC_API_KEY=your_key_here
 # PORT=3000
-EnvironmentFile=-/home/pi/maverick-telemetry/server/.env
+EnvironmentFile=-/home/pi/maverick-telemetry-hub/server/.env
 
 [Install]
 WantedBy=multi-user.target

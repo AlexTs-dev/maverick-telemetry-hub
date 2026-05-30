@@ -6,7 +6,7 @@
 
 [Unit]
 Description=Maverick Telemetry — DB Writer
-Documentation=https://github.com/yourusername/maverick-telemetry
+Documentation=https://github.com/AlexTs-dev/maverick-telemetry-hub
 # Must start after Mosquitto is fully up
 After=network.target mosquitto.service
 Requires=mosquitto.service
@@ -14,8 +14,8 @@ Requires=mosquitto.service
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/maverick-telemetry
-ExecStart=/home/pi/maverick-telemetry/venv/bin/python db_writer.py
+WorkingDirectory=/home/pi/maverick-telemetry-hub
+ExecStart=/home/pi/maverick-telemetry-hub/venv/bin/python db_writer.py
 
 # Restart policy — always restart on failure, with 5s delay
 Restart=always

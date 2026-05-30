@@ -6,7 +6,7 @@
 
 [Unit]
 Description=Maverick Telemetry — OBD Poller
-Documentation=https://github.com/yourusername/maverick-telemetry
+Documentation=https://github.com/AlexTs-dev/maverick-telemetry-hub
 # Last in boot order — starts publishing only after db_writer
 # and trip_manager are ready to consume
 After=network.target mosquitto.service db_writer.service trip_manager.service
@@ -15,8 +15,8 @@ Requires=mosquitto.service
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/maverick-telemetry
-ExecStart=/home/pi/maverick-telemetry/venv/bin/python obd_poller.py
+WorkingDirectory=/home/pi/maverick-telemetry-hub
+ExecStart=/home/pi/maverick-telemetry-hub/venv/bin/python obd_poller.py
 
 Restart=always
 RestartSec=5

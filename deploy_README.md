@@ -12,7 +12,7 @@ sudo systemctl start mosquitto
 
 ### 2. Set up Python virtual environment
 ```bash
-cd /home/pi/maverick-telemetry
+cd /home/pi/maverick-telemetry-hub
 python3 -m venv venv
 source venv/bin/activate
 pip install obd paho-mqtt

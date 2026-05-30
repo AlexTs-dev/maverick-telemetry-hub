@@ -6,7 +6,7 @@
 
 [Unit]
 Description=Maverick Telemetry — Trip Manager
-Documentation=https://github.com/yourusername/maverick-telemetry
+Documentation=https://github.com/AlexTs-dev/maverick-telemetry-hub
 # Must start after db_writer is up so trip_open events are captured
 After=network.target mosquitto.service db_writer.service
 Requires=mosquitto.service db_writer.service
@@ -14,8 +14,8 @@ Requires=mosquitto.service db_writer.service
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/maverick-telemetry
-ExecStart=/home/pi/maverick-telemetry/venv/bin/python trip_manager.py
+WorkingDirectory=/home/pi/maverick-telemetry-hub
+ExecStart=/home/pi/maverick-telemetry-hub/venv/bin/python trip_manager.py
 
 Restart=always
 RestartSec=5
