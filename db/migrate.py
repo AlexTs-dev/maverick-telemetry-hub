@@ -110,7 +110,7 @@ CREATE INDEX IF NOT EXISTS idx_dtcs_trip      ON dtcs(trip_id);
 
     2: """
 -- Raw hybrid sensor columns (Ford Mode 22 PIDs 480B, 480C, 4A15).
--- Used to derive ev_mode and regen_kw in obd_poller; stored here for
+-- Used to derive ev_mode and regen_kw in obd_poller stored here for
 -- post-trip analysis without re-deriving from the computed fields.
 ALTER TABLE readings ADD COLUMN pack_voltage_v    REAL;
 ALTER TABLE readings ADD COLUMN battery_current_a REAL;
