@@ -84,9 +84,8 @@ function TripRow({ trip, onTap }: { trip: Trip; onTap: () => void }) {
 
       {/* Stats */}
       <div className="flex items-center gap-1 shrink-0">
-        <Stat label="mpg"  value={fmt(trip.avg_fuel_economy_mpg)} />
-        <Stat label="ev %"  value={trip.ev_time_pct != null ? `${trip.ev_time_pct.toFixed(0)}%` : '—'} />
-        <Stat label="soc"  value={trip.min_battery_soc_pct != null ? `${trip.min_battery_soc_pct.toFixed(0)}%` : '—'} />
+        <Stat label="mpg" value={fmt(trip.avg_fuel_economy_mpg)} />
+        <Stat label="mph" value={fmt(trip.avg_speed_mph, 0)} />
       </div>
 
       {/* DTC badge */}
@@ -112,7 +111,7 @@ function LoadingSkeleton() {
             <Skeleton className="h-4 w-36" />
             <Skeleton className="h-3 w-56" />
           </div>
-          <Skeleton className="h-8 w-40" />
+          <Skeleton className="h-8 w-28" />
         </div>
       ))}
     </div>
@@ -164,7 +163,7 @@ export function TripListPage() {
       <div className="flex items-center gap-3 px-4 h-7 border-b bg-muted/30 shrink-0">
         <span className="flex-1 text-[10px] text-muted-foreground uppercase tracking-wider">Trip</span>
         <div className="flex gap-1 shrink-0">
-          {['mpg', 'ev %', 'soc'].map(h => (
+          {['mpg', 'mph'].map(h => (
             <span key={h} className="w-14 text-center text-[10px] text-muted-foreground uppercase tracking-wider">{h}</span>
           ))}
         </div>

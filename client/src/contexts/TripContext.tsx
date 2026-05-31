@@ -44,19 +44,13 @@ export interface Trip extends TripSummary {
 }
 
 export interface Reading {
-  id:               number
-  ts:               string
-  rpm:              number | null
-  speed_mph:        number | null
-  coolant_temp_f:   number | null
-  throttle_pct:     number | null
-  battery_soc_pct:  number | null
-  ev_mode:          number | null  // 1 | 0 | null
-  regen_kw:         number | null
-  fuel_rate_gph:    number | null
-  pack_voltage_v:   number | null
-  battery_current_a: number | null
-  motor_speed_rpm:  number | null
+  id:             number
+  ts:             string
+  rpm:            number | null
+  speed_mph:      number | null
+  coolant_temp_f: number | null
+  throttle_pct:   number | null
+  fuel_rate_gph:  number | null
 }
 
 export interface DTC {

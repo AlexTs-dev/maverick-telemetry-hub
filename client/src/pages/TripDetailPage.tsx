@@ -124,8 +124,8 @@ function DtcCard({ dtc, onDiagnose, busy }: { dtc: DTC; onDiagnose: () => void; 
 function LoadingSkeleton() {
   return (
     <>
-      <div className="grid grid-cols-4 gap-px bg-border border-b shrink-0">
-        {Array.from({ length: 8 }).map((_, i) => (
+      <div className="grid grid-cols-3 gap-px bg-border border-b shrink-0">
+        {Array.from({ length: 6 }).map((_, i) => (
           <div key={i} className="bg-background flex flex-col items-center py-2 gap-1">
             <Skeleton className="h-4 w-12" />
             <Skeleton className="h-2.5 w-8" />
@@ -133,10 +133,9 @@ function LoadingSkeleton() {
         ))}
       </div>
       <div className="flex-1 p-3 grid grid-cols-2 gap-3 content-start">
-        {Array.from({ length: 4 }).map((_, i) => (
+        {Array.from({ length: 2 }).map((_, i) => (
           <Skeleton key={i} className="h-24 rounded-lg" />
         ))}
-        <Skeleton className="h-16 rounded-lg col-span-2" />
       </div>
     </>
   )
@@ -157,12 +156,6 @@ function ErrorState({ message, onBack }: { message: string; onBack: () => void }
 
 function pluck(readings: Reading[], key: keyof Reading): number[] {
   return readings.map(r => r[key] as number | null).filter((v): v is number => v != null)
-}
-
-function evPct(readings: Reading[]) {
-  if (!readings.length) return null
-  const ev = readings.filter(r => r.ev_mode === 1).length
-  return Math.round((ev / readings.length) * 100)
 }
 
 // ---------------------------------------------------------------------------
@@ -186,11 +179,8 @@ export function TripDetailPage() {
     }
   }
 
-  const speedVals   = pluck(readings, 'speed_mph')
-  const rpmVals     = pluck(readings, 'rpm')
-  const socVals     = pluck(readings, 'battery_soc_pct')
-  const regenVals   = pluck(readings, 'regen_kw')
-  const computedEv  = evPct(readings)
+  const speedVals = pluck(readings, 'speed_mph')
+  const rpmVals   = pluck(readings, 'rpm')
 
   return (
     <div className="flex flex-col h-screen">
@@ -229,16 +219,14 @@ export function TripDetailPage() {
       {/* Content */}
       {!loading && !error && trip && (
         <>
-          {/* Stats grid — 2 rows × 4 cols */}
-          <div className="grid grid-cols-4 gap-px bg-border border-b shrink-0">
+          {/* Stats grid — 2 rows × 3 cols */}
+          <div className="grid grid-cols-3 gap-px bg-border border-b shrink-0">
             <StatCell label="mpg"     value={fmt(trip.avg_fuel_economy_mpg)} />
-            <StatCell label="ev %"    value={computedEv != null ? `${computedEv}%` : fmt(trip.ev_time_pct, 0, '%')} />
-            <StatCell label="min soc" value={fmt(trip.min_battery_soc_pct, 0, '%')} />
-            <StatCell label="regen"   value={fmt(trip.total_regen_kwh, 2, ' kWh')} />
             <StatCell label="avg spd" value={fmt(trip.avg_speed_mph, 0, ' mph')} />
             <StatCell label="max spd" value={fmt(trip.max_speed_mph, 0, ' mph')} />
             <StatCell label="avg rpm" value={fmt(trip.avg_rpm, 0)} />
             <StatCell label="coolant" value={fmt(trip.max_coolant_temp_f, 0, '°F')} />
+            <StatCell label="dist"    value={formatDistance(trip.odometer_start, trip.odometer_end)} />
           </div>
 
           {/* Scrollable body */}
@@ -257,27 +245,11 @@ export function TripDetailPage() {
                   </ChartCard>
 
                   <ChartCard
-                    title="Battery SOC (%)"
-                    min={socVals.length ? `${Math.min(...socVals).toFixed(0)}%` : undefined}
-                    max={socVals.length ? `${Math.max(...socVals).toFixed(0)}%` : undefined}
-                  >
-                    <Sparkline values={socVals} stroke="hsl(var(--chart-2))" />
-                  </ChartCard>
-
-                  <ChartCard
                     title="Engine RPM"
                     min={rpmVals.length ? `${Math.min(...rpmVals).toFixed(0)}` : undefined}
                     max={rpmVals.length ? `${Math.max(...rpmVals).toFixed(0)}` : undefined}
                   >
                     <Sparkline values={rpmVals} stroke="hsl(var(--chart-3))" />
-                  </ChartCard>
-
-                  <ChartCard
-                    title="Regen (kW)"
-                    min={regenVals.length ? `${Math.min(...regenVals).toFixed(1)}` : undefined}
-                    max={regenVals.length ? `${Math.max(...regenVals).toFixed(1)}` : undefined}
-                  >
-                    <Sparkline values={regenVals} stroke="hsl(var(--chart-4))" />
                   </ChartCard>
                 </div>
               )}
