@@ -173,7 +173,11 @@ def connect_obd(backoff: float) -> obd.OBD:
     )
     if not connection.is_connected():
         raise ConnectionError(f"OBD connection failed — is OBDLink EX plugged in?")
-    log.info("OBD connected")
+    try:
+        baud = connection.interface._ELM327__port.baudrate
+        log.info(f"OBD connected — port={OBD_PORT or 'auto'} baudrate={baud}")
+    except Exception:
+        log.info("OBD connected")
     return connection
 
 
