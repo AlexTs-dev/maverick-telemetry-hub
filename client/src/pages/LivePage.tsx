@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useState } from 'react'
 import * as d3 from 'd3'
 import { useLiveTelemetry } from '@/contexts/WebSocketContext'
 import type { LiveReading, PollerStatus } from '@/contexts/WebSocketContext'
@@ -276,8 +276,26 @@ function LiveChart({ readings, accessor, color, label, unit, yDomain }: LiveChar
 // ---------------------------------------------------------------------------
 
 export function LivePage() {
-  const { pollerStatus, lastReading, readings, activeTripId } = useLiveTelemetry()
+  const { connected, pollerStatus, lastReading, readings, activeTripId } = useLiveTelemetry()
   const r = lastReading
+
+  // Tick every second so data-age re-evaluates even when readings stop arriving
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  const dataAgeMs  = lastReading ? now - lastReading.date.getTime() : Infinity
+  const isLive     = dataAgeMs < 4_000   // data within the last 4 poll cycles
+
+  // Derived status — data freshness beats MQTT events for accuracy
+  const derivedStatus: PollerStatus =
+    !connected                    ? 'disconnected' :
+    pollerStatus === 'connecting' ? 'connecting'   :
+    isLive                        ? 'connected'    :
+    pollerStatus === 'disconnected' ? 'disconnected' :
+    'unknown'
 
   return (
     <div className="flex flex-col h-screen">
@@ -285,16 +303,16 @@ export function LivePage() {
       {/* Header — 48px */}
       <div className="flex items-center justify-between px-4 h-12 border-b shrink-0">
         <div className="flex items-center gap-2">
-          <StatusDot status={pollerStatus} />
+          <StatusDot status={derivedStatus} />
           <h1 className="text-base font-semibold">Live</h1>
           {activeTripId != null && (
             <span className="text-xs text-muted-foreground">Trip #{activeTripId}</span>
           )}
         </div>
-        <Badge variant={pollerStatus === 'connected' ? 'outline' : 'destructive'} className="text-xs">
-          {pollerStatus === 'connected'    ? 'Connected'    :
-           pollerStatus === 'connecting'   ? 'Connecting…'  :
-           pollerStatus === 'disconnected' ? 'Disconnected' : 'Unknown'}
+        <Badge variant={derivedStatus === 'connected' ? 'outline' : 'destructive'} className="text-xs">
+          {derivedStatus === 'connected'    ? 'Live'         :
+           derivedStatus === 'connecting'   ? 'Connecting…'  :
+           derivedStatus === 'disconnected' ? 'Disconnected' : 'Waiting…'}
         </Badge>
       </div>
 

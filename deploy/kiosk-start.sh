@@ -18,7 +18,9 @@ else
     OZONE=--ozone-platform=x11
 fi
 
-exec chromium-browser \
+CHROMIUM=$(command -v chromium || command -v chromium-browser)
+
+exec "$CHROMIUM" \
     --kiosk \
     --noerrdialogs \
     --disable-infobars \
