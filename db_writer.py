@@ -354,6 +354,51 @@ def build_mqtt_client(conn: sqlite3.Connection) -> mqtt.Client:
 # Main
 # ---------------------------------------------------------------------------
 
+def recover_unclosed_trips(conn: sqlite3.Connection) -> None:
+    """
+    Close any trips left open by an unexpected shutdown (e.g., engine cutting
+    power to the Pi before trip_manager could publish trip_close).
+    Uses the last committed reading's timestamp as ended_at and computes
+    the trip summary from whatever readings were saved.
+    """
+    unclosed = conn.execute(
+        "SELECT id, started_at FROM trips WHERE ended_at IS NULL"
+    ).fetchall()
+
+    for row in unclosed:
+        trip_id    = row["id"]
+        started_at = row["started_at"]
+
+        last = conn.execute(
+            "SELECT ts FROM readings WHERE trip_id = ? ORDER BY ts DESC LIMIT 1",
+            (trip_id,),
+        ).fetchone()
+
+        ended_at = last["ts"] if last else started_at
+
+        duration = None
+        try:
+            start    = datetime.fromisoformat(started_at)
+            end      = datetime.fromisoformat(ended_at)
+            duration = int((end - start).total_seconds())
+        except Exception:
+            pass
+
+        dtc_row   = conn.execute(
+            "SELECT COUNT(*) as cnt FROM dtcs WHERE trip_id = ?", (trip_id,)
+        ).fetchone()
+        dtc_count = dtc_row["cnt"] if dtc_row else 0
+
+        conn.execute(
+            "UPDATE trips SET ended_at = ?, duration_seconds = ?, dtc_count = ? WHERE id = ?",
+            (ended_at, duration, dtc_count, trip_id),
+        )
+        conn.commit()
+
+        compute_trip_summary(conn, trip_id)
+        log.info(f"Recovered unclosed trip {trip_id} — ended_at={ended_at}")
+
+
 def run() -> None:
     if not DB_PATH.exists():
         log.critical(
@@ -364,6 +409,8 @@ def run() -> None:
 
     conn = get_connection()
     log.info(f"SQLite connected — {DB_PATH}")
+
+    recover_unclosed_trips(conn)
 
     mqtt_client = build_mqtt_client(conn)
 
