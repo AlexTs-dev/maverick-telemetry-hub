@@ -13,16 +13,18 @@
 
 ![Mounted display showing live telemetry](docs/PXL_20260531_2334220612.jpg)
 
-*5" touchscreen mounted in the cab — live speed and RPM traces, coolant temp, throttle, and fuel rate. Powered by the ignition via a hardwired 12V buck converter.*
+*5" touchscreen mounted in the cab — live speed and RPM traces, coolant temp, throttle, and fuel rate.*
 
 ---
 
 ## Dashboard
 
 ![Trip list](docs/Screenshot%202026-05-31%20210531.png)
+
 *Trip history with MPG, average speed, and DTC badge for any trip with fault codes.*
 
 ![Trip detail](docs/Screenshot%202026-05-31%20210608.png)
+
 *Per-trip detail: summary stats, AI-interpreted fault code (P0D0B diagnosed by Claude), and trip notes.*
 
 ---
@@ -89,9 +91,9 @@ When the engine cuts power to the Pi mid-trip, processes die without a clean shu
 | Storage (v1) | Samsung Pro Endurance 64GB SD card |
 | OBD-II adapter | OBDLink EX (USB) |
 | Display | Hosyond 5" IPS Capacitive Touchscreen, 800×480, MIPI DSI |
-| Power | 12V buck converter → USB-C, switched with ignition |
 
 ### Planned v2 hardware
+- 12V buck converter → USB-C, switched with ignition (hardwired power)
 - Raspberry Pi M.2 HAT+
 - WD SN740 M.2 2230 NVMe 256GB
 - Argon NEO 5 M.2 aluminum enclosure (passive cooling)
