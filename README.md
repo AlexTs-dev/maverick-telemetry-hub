@@ -2,7 +2,7 @@
 
 > An offline-first, AI-enhanced vehicle telemetry system built for a 2026 Ford Maverick Hybrid — running on a Raspberry Pi 5, mounted in the cab.
 
-![Status](https://img.shields.io/badge/status-running-brightgreen)
+![Status](https://img.shields.io/badge/status-in%20progress-yellow)
 ![Stack](https://img.shields.io/badge/stack-Python%20%7C%20MQTT%20%7C%20Node.js%20%7C%20React-blue)
 ![Hardware](https://img.shields.io/badge/hardware-Raspberry%20Pi%205%20%7C%20OBDLink%20EX-teal)
 ![License](https://img.shields.io/badge/license-MIT-green)
