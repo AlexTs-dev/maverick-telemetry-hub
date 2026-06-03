@@ -1,6 +1,5 @@
 # deploy/kiosk.service
-# Launches Chromium in fullscreen kiosk mode after the Express bridge
-# is ready, displaying the Maverick Telemetry Hub dashboard.
+# Launches the Tauri dashboard app after the Express bridge is ready.
 #
 # Install: sudo cp deploy/kiosk.service /etc/systemd/system/
 #          sudo systemctl daemon-reload
@@ -8,9 +7,8 @@
 #          sudo systemctl start kiosk
 
 [Unit]
-Description=Maverick Telemetry — Kiosk Browser
+Description=Maverick Telemetry — Kiosk (Tauri)
 Documentation=https://github.com/AlexTs-dev/maverick-telemetry-hub
-# Start after Express bridge is up
 After=express_bridge.service graphical.target
 Requires=express_bridge.service
 
@@ -18,7 +16,7 @@ Requires=express_bridge.service
 Type=simple
 User=pi
 
-# Wait for Express bridge to be ready before launching browser.
+# Wait for Express bridge to be ready before opening the window.
 # Retries curl every second for up to 30 seconds.
 ExecStartPre=/bin/bash -c '\
   for i in $(seq 1 30); do \
@@ -27,11 +25,8 @@ ExecStartPre=/bin/bash -c '\
   done; \
   exit 1'
 
-# kiosk-start.sh auto-detects the Wayland socket (wayland-0 or wayland-1)
-# and opens the live telemetry page in fullscreen.
 ExecStart=/home/pi/maverick-telemetry-hub/deploy/kiosk-start.sh
 
-# If Chromium crashes, restart it after 3 seconds
 Restart=on-failure
 RestartSec=3
 

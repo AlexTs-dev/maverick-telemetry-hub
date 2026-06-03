@@ -16,7 +16,29 @@ curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt install -y nodejs
 ```
 
-### 3. Set up Python virtual environment
+### 3. Install Rust
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+```
+
+### 4. Install Tauri system dependencies (WebKitGTK)
+```bash
+sudo apt install -y \
+  libwebkit2gtk-4.1-dev \
+  libgtk-3-dev \
+  librsvg2-dev \
+  libjavascriptcoregtk-4.1-dev \
+  build-essential \
+  curl \
+  wget \
+  file \
+  libxdo-dev \
+  libssl-dev \
+  libayatana-appindicator3-dev
+```
+
+### 5. Set up Python virtual environment
 ```bash
 cd /home/pi/maverick-telemetry-hub
 python3 -m venv venv
@@ -24,24 +46,26 @@ source venv/bin/activate
 pip install obd paho-mqtt
 ```
 
-### 4. Initialize the database
+### 6. Initialize the database
 ```bash
 source venv/bin/activate
 python db/migrate.py
 ```
 
-### 5. Install Node dependencies and build the client
+### 7. Install Node dependencies and build the Tauri app
 ```bash
 cd server && npm install && cd ..
-cd client && npm install && npm run build && cd ..
+cd client && npm install && npm run tauri:build && cd ..
 ```
 
-### 6. Create the environment file
+The compiled binary will be at `client/src-tauri/target/release/maverick-telemetry`.
+
+### 8. Create the environment file
 ```bash
 echo "ANTHROPIC_API_KEY=your_key_here" > server/.env
 ```
 
-### 7. Grant USB access for OBDLink EX
+### 9. Grant USB access for OBDLink EX
 The poller runs as the `pi` user, not root. Add pi to the dialout
 group so it can access /dev/ttyUSB0 without sudo:
 ```bash
@@ -54,6 +78,50 @@ Confirm the OBDLink EX is visible after plugging in:
 ls /dev/ttyUSB*
 # Should show /dev/ttyUSB0
 ```
+
+---
+
+## GitHub Actions self-hosted runner
+
+The CI/CD pipeline builds the Tauri app on GitHub's hardware and deploys it
+via a self-hosted runner on the Pi. The Pi initiates an outbound connection to
+GitHub — no inbound SSH or public IP required.
+
+### Register the runner (one-time)
+
+1. Go to your repo on GitHub → **Settings → Actions → Runners → New self-hosted runner**
+2. Select **Linux / ARM64** and follow the shown commands on the Pi:
+
+```bash
+mkdir -p ~/actions-runner && cd ~/actions-runner
+# Download and extract (use the URL shown by GitHub, it includes your token)
+curl -o actions-runner.tar.gz -L <URL from GitHub>
+tar xzf actions-runner.tar.gz
+./config.sh --url https://github.com/<owner>/<repo> --token <TOKEN>
+```
+
+3. Install and start the runner as a systemd service:
+
+```bash
+sudo ./svc.sh install pi   # run as the 'pi' user
+sudo ./svc.sh start
+sudo systemctl enable actions.runner.*
+```
+
+### Allow passwordless service restart
+
+The deploy job restarts `express_bridge` and `kiosk` via sudo:
+
+```bash
+echo "pi ALL=(ALL) NOPASSWD: /bin/systemctl restart express_bridge kiosk" \
+  | sudo tee /etc/sudoers.d/maverick-deploy
+```
+
+### Security note
+
+Self-hosted runners execute code from the repository. Keep the repo private
+or restrict which branches can trigger workflows to avoid running untrusted code
+on the Pi.
 
 ---
 
@@ -73,6 +141,8 @@ sudo systemctl daemon-reload
 sudo systemctl enable db_writer trip_manager obd_poller express_bridge kiosk
 sudo systemctl start  db_writer trip_manager obd_poller express_bridge kiosk
 ```
+
+The `kiosk.service` launches the Tauri binary in place of Chromium.
 
 ---
 
@@ -125,9 +195,14 @@ After pulling new code:
 ```bash
 git pull
 
-# Rebuild the client if frontend files changed
-cd client && npm run build && cd ..
+# Rebuild the Tauri app if client files changed
+cd client && npm run tauri:build && cd ..
 
+sudo systemctl restart kiosk
+```
+
+If only the Express server changed:
+```bash
 sudo systemctl restart express_bridge
 ```
 
@@ -170,7 +245,11 @@ sudo systemctl disable obd_poller trip_manager db_writer express_bridge kiosk
 - If the Pi lost power mid-trip, db_writer will recover the trip automatically on next boot
 - Check logs for "Recovered unclosed trip": `journalctl -u db_writer -b | grep Recovered`
 
-**Dashboard not loading**
-- Check express_bridge is running: `sudo systemctl status express_bridge`
-- Confirm the client was built: `ls client/dist/index.html`
+**Tauri window not opening**
+- Check kiosk service logs: `journalctl -u kiosk -f`
+- Make sure the binary exists: `ls client/src-tauri/target/release/maverick-telemetry`
+- Confirm WebKitGTK is installed: `dpkg -l libwebkit2gtk-4.1-dev`
+
+**Dashboard not loading in Tauri window**
+- Confirm express_bridge is running before kiosk starts: `sudo systemctl status express_bridge`
 - Check server logs: `journalctl -u express_bridge -f`

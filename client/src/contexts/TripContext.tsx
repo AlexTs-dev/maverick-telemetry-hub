@@ -8,7 +8,7 @@
 //   const { trips, loading, error } = useTrips()
 //   const { trip, readings, dtcs, loading } = useTrip(id)
 
-import React, {
+import {
   createContext,
   useContext,
   useEffect,
@@ -104,7 +104,11 @@ interface TripDetailState {
 // API helpers
 // ---------------------------------------------------------------------------
 
-const API = '/api'
+// In a Tauri window the page isn't served from localhost:3000, so relative
+// URLs won't reach the Express server. Detect Tauri at runtime and use an
+// absolute base; in a regular browser relative URLs work fine.
+const TAURI = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+const API   = (TAURI ? 'http://localhost:3000' : '') + '/api'
 
 async function apiFetch<T>(path: string): Promise<T> {
   const res = await fetch(`${API}${path}`)

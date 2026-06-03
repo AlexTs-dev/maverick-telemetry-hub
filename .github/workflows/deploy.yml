@@ -1,0 +1,121 @@
+name: Build and Deploy to Pi
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Build the Tauri app on GitHub's native ARM64 runner.
+  # Uploads the binary and React dist as artifacts for the deploy job.
+  # -------------------------------------------------------------------------
+  build:
+    name: Build Tauri (ARM64)
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            libxdo-dev \
+            build-essential
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client/src-tauri
+
+      - name: Install client dependencies
+        working-directory: client
+        run: npm ci
+
+      - name: Build Tauri app
+        working-directory: client
+        run: npm run tauri:build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tauri-binary
+          path: client/src-tauri/target/release/maverick-telemetry
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: client-dist
+          path: client/dist/
+          if-no-files-found: error
+
+  # -------------------------------------------------------------------------
+  # Deploy runs on the Pi's self-hosted runner — the Pi pulls the job from
+  # GitHub over its existing outbound connection. No inbound SSH needed.
+  #
+  # One-time Pi setup:
+  #   1. Register a self-hosted runner (see deploy/README.md)
+  #   2. Allow passwordless systemctl restart:
+  #      echo "pi ALL=(ALL) NOPASSWD: /bin/systemctl restart express_bridge kiosk" \
+  #        | sudo tee /etc/sudoers.d/maverick-deploy
+  # -------------------------------------------------------------------------
+  deploy:
+    name: Deploy to Pi
+    needs: build
+    runs-on: [self-hosted, linux, ARM64]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Tauri binary
+        uses: actions/download-artifact@v4
+        with:
+          name: tauri-binary
+          path: _artifacts/binary/
+
+      - name: Download client dist
+        uses: actions/download-artifact@v4
+        with:
+          name: client-dist
+          path: _artifacts/dist/
+
+      - name: Deploy files
+        run: |
+          PROD="$HOME/maverick-telemetry-hub"
+
+          # Python services and DB migrations
+          cp obd_poller.py trip_manager.py db_writer.py "$PROD/"
+          rsync -a --delete db/     "$PROD/db/"
+          rsync -a --delete deploy/ "$PROD/deploy/"
+
+          # Express server — skip node_modules so npm install manages it
+          rsync -a --delete --exclude=node_modules/ server/ "$PROD/server/"
+
+          # Tauri binary
+          mkdir -p "$PROD/client/src-tauri/target/release"
+          cp _artifacts/binary/maverick-telemetry \
+             "$PROD/client/src-tauri/target/release/maverick-telemetry"
+          chmod +x "$PROD/client/src-tauri/target/release/maverick-telemetry"
+
+          # React build (served statically by Express for browser access)
+          rsync -a --delete _artifacts/dist/ "$PROD/client/dist/"
+
+      - name: Post-deploy
+        run: |
+          cd "$HOME/maverick-telemetry-hub"
+          source venv/bin/activate && python db/migrate.py
+          cd server && npm install --omit=dev && cd ..
+          sudo systemctl restart express_bridge kiosk

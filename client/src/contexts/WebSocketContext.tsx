@@ -26,9 +26,12 @@ import type { Reading } from './TripContext'
 // At 1Hz this is 5 minutes of live data for D3 charts.
 const BUFFER_SIZE = 300
 
+const TAURI  = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 const WS_URL =
   import.meta.env.VITE_WS_URL ??
-  (typeof window !== 'undefined'
+  (TAURI
+    ? 'ws://localhost:3000'
+    : typeof window !== 'undefined'
     ? `ws://${window.location.host}`
     : 'ws://localhost:3000')
 

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Maverick Telemetry",
+  "version": "0.0.0",
+  "identifier": "com.maverick.telemetry",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Maverick Telemetry",
+        "width": 800,
+        "height": 480,
+        "fullscreen": true,
+        "decorations": false,
+        "resizable": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' tauri: asset:; connect-src http://localhost:3000 ws://localhost:3000; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; script-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": []
+  }
+}
