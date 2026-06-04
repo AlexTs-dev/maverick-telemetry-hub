@@ -81,47 +81,54 @@ ls /dev/ttyUSB*
 
 ---
 
-## GitHub Actions self-hosted runner
+## Continuous deployment (pull-based)
 
-The CI/CD pipeline builds the Tauri app on GitHub's hardware and deploys it
-via a self-hosted runner on the Pi. The Pi initiates an outbound connection to
-GitHub — no inbound SSH or public IP required.
+On every push to `main`, GitHub Actions builds the Tauri app on an ARM64
+runner and publishes a GitHub Release with the binary and React dist as assets.
+The Pi polls the releases API every 2 minutes and applies the update itself —
+no inbound SSH, no public IP, no secrets on GitHub.
 
-### Register the runner (one-time)
+### One-time Pi setup
 
-1. Go to your repo on GitHub → **Settings → Actions → Runners → New self-hosted runner**
-2. Select **Linux / ARM64** and follow the shown commands on the Pi:
-
-```bash
-mkdir -p ~/actions-runner && cd ~/actions-runner
-# Download and extract (use the URL shown by GitHub, it includes your token)
-curl -o actions-runner.tar.gz -L <URL from GitHub>
-tar xzf actions-runner.tar.gz
-./config.sh --url https://github.com/<owner>/<repo> --token <TOKEN>
-```
-
-3. Install and start the runner as a systemd service:
-
-```bash
-sudo ./svc.sh install pi   # run as the 'pi' user
-sudo ./svc.sh start
-sudo systemctl enable actions.runner.*
-```
-
-### Allow passwordless service restart
-
-The deploy job restarts `express_bridge` and `kiosk` via sudo:
-
+Enable passwordless service restarts:
 ```bash
 echo "pi ALL=(ALL) NOPASSWD: /bin/systemctl restart express_bridge kiosk" \
   | sudo tee /etc/sudoers.d/maverick-deploy
 ```
 
-### Security note
+Make the script executable and install the timer:
+```bash
+chmod +x /home/pi/maverick-telemetry-hub/deploy/pull-deploy.sh
 
-Self-hosted runners execute code from the repository. Keep the repo private
-or restrict which branches can trigger workflows to avoid running untrusted code
-on the Pi.
+sudo cp deploy/pull-deploy.service /etc/systemd/system/
+sudo cp deploy/pull-deploy.timer   /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now pull-deploy.timer
+```
+
+### Optional: GitHub token for higher API rate limits
+
+Unauthenticated requests are capped at 60/hour. At 2-minute polling that's
+fine, but a token raises the limit to 5000/hour:
+
+```bash
+echo "GITHUB_TOKEN=ghp_yourtoken" > /home/pi/.maverick-env
+# Uncomment the EnvironmentFile line in pull-deploy.service, then:
+sudo systemctl daemon-reload
+```
+
+### Check deploy status
+
+```bash
+# See the last deploy run
+journalctl -u pull-deploy -n 50
+
+# Watch live
+journalctl -u pull-deploy -f
+
+# Check timer schedule
+systemctl status pull-deploy.timer
+```
 
 ---
 
@@ -135,11 +142,13 @@ sudo cp deploy/trip_manager.service    /etc/systemd/system/
 sudo cp deploy/obd_poller.service      /etc/systemd/system/
 sudo cp deploy/express_bridge.service  /etc/systemd/system/
 sudo cp deploy/kiosk.service           /etc/systemd/system/
+sudo cp deploy/pull-deploy.service     /etc/systemd/system/
+sudo cp deploy/pull-deploy.timer       /etc/systemd/system/
 
 sudo systemctl daemon-reload
 
-sudo systemctl enable db_writer trip_manager obd_poller express_bridge kiosk
-sudo systemctl start  db_writer trip_manager obd_poller express_bridge kiosk
+sudo systemctl enable db_writer trip_manager obd_poller express_bridge kiosk pull-deploy.timer
+sudo systemctl start  db_writer trip_manager obd_poller express_bridge kiosk pull-deploy.timer
 ```
 
 The `kiosk.service` launches the Tauri binary in place of Chromium.

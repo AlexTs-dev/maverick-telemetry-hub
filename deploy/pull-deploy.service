@@ -1,0 +1,17 @@
+[Unit]
+Description=Maverick Telemetry — Pull Deploy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pi
+WorkingDirectory=/home/pi/maverick-telemetry-hub
+ExecStart=/home/pi/maverick-telemetry-hub/deploy/pull-deploy.sh
+
+# Optional: set a GitHub token for higher API rate limits (60 → 5000 req/hr)
+# EnvironmentFile=/home/pi/.maverick-env
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pull-deploy
