@@ -77,6 +77,7 @@ When the engine cuts power to the Pi mid-trip, processes die without a clean shu
 - **1Hz sensor logging** — RPM, speed, coolant temp, throttle position, and fuel rate written to SQLite every second.
 - **Post-trip dashboard** — React UI served over local WiFi. Trip history, speed and RPM traces, MPG, and per-trip notes.
 - **AI fault code interpreter** — DTCs sent to Claude for plain-English diagnosis with urgency assessment. Results cached in SQLite.
+- **Native Tauri display** — the dashboard runs as a Tauri app (WebKitGTK) rather than a Chromium kiosk. Eliminates a full browser process, meaningfully reducing CPU load and heat in a thermally constrained cab environment.
 - **Live kiosk view** — real-time gauges and 5-minute rolling charts via WebSocket. Designed for glanceable display while driving.
 - **Offline-first** — core telemetry runs with zero network dependency. AI features degrade gracefully without connectivity.
 - **Power-loss resilient** — trip data is committed reading-by-reading; unclosed trips are recovered automatically on reboot.
@@ -111,6 +112,7 @@ When the engine cuts power to the Pi mid-trip, processes die without a clean shu
 | Database | SQLite (WAL mode, versioned migrations) |
 | Backend / bridge | Node.js, Express, WebSockets, better-sqlite3 |
 | Frontend | React, TypeScript, Vite, Tailwind CSS |
+| Display runtime | Tauri 2 (WebKitGTK — replaces Chromium kiosk) |
 | Charts | D3 |
 | AI integration | Claude API (claude-sonnet-4-6) |
 
