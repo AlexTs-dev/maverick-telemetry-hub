@@ -15,4 +15,9 @@ else
     export DISPLAY=:0
 fi
 
+# WebKitGTK's DMABUF renderer corrupts the display on the Pi's V3D GPU
+# (scattered colored-pixel artifacts over a black screen). Disabling it
+# forces a stable rendering path. Keep accelerated compositing on.
+export WEBKIT_DISABLE_DMABUF_RENDERER=1
+
 exec /home/pi/maverick-telemetry-hub/client/src-tauri/target/release/maverick-telemetry

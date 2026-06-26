@@ -1,0 +1,6 @@
+# This repo is developed on Windows but deployed to a Linux (Raspberry Pi).
+# Force LF on files the Pi executes or parses so Windows CRLF endings can't
+# break them — e.g. a CRLF shebang fails with "bad interpreter: /bin/bash^M".
+*.sh      text eol=lf
+*.service text eol=lf
+*.timer   text eol=lf

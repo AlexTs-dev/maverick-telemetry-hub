@@ -89,7 +89,10 @@ tar -xzf "$WORK_DIR/client-dist.tar.gz" -C client/dist --overwrite
 # Post-deploy
 # ---------------------------------------------------------------------------
 source venv/bin/activate
-python db/migrate.py
+# Migrate the LIVE database. MAVERICK_DB_PATH must match the value in the
+# *.service files — otherwise migrate.py falls back to its repo-relative
+# default and the running services never see the schema changes.
+MAVERICK_DB_PATH=/home/pi/maverick_telemetry.db python db/migrate.py
 
 cd server && npm install --omit=dev && cd ..
 

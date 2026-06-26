@@ -49,7 +49,10 @@ pip install obd paho-mqtt
 ### 6. Initialize the database
 ```bash
 source venv/bin/activate
-python db/migrate.py
+# MAVERICK_DB_PATH must match the value in the systemd *.service files,
+# otherwise the DB is created at migrate.py's repo-relative default and
+# the services won't find it.
+MAVERICK_DB_PATH=/home/pi/maverick_telemetry.db python db/migrate.py
 ```
 
 ### 7. Install Node dependencies and build the Tauri app
