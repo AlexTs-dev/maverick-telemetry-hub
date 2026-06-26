@@ -121,12 +121,12 @@ def handle_reading(conn: sqlite3.Connection, payload: dict) -> None:
                 trip_id, ts, rpm, speed_mph, coolant_temp_f,
                 throttle_pct, battery_soc_pct, ev_mode, regen_kw,
                 fuel_rate_gph, pack_voltage_v, battery_current_a,
-                motor_speed_rpm
+                motor_speed_rpm, hvb_temp_f
             ) VALUES (
                 :trip_id, :ts, :rpm, :speed_mph, :coolant_temp_f,
                 :throttle_pct, :battery_soc_pct, :ev_mode, :regen_kw,
                 :fuel_rate_gph, :pack_voltage_v, :battery_current_a,
-                :motor_speed_rpm
+                :motor_speed_rpm, :hvb_temp_f
             )
             """,
             {
@@ -143,6 +143,7 @@ def handle_reading(conn: sqlite3.Connection, payload: dict) -> None:
                 "pack_voltage_v":   payload.get("pack_voltage_v"),
                 "battery_current_a": payload.get("battery_current_a"),
                 "motor_speed_rpm":  payload.get("motor_speed_rpm"),
+                "hvb_temp_f":       payload.get("hvb_temp_f"),
             },
         )
         conn.commit()

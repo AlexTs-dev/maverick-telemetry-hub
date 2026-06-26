@@ -103,7 +103,10 @@ router.get('/:id/readings', (req, res) => {
                 speed_mph,
                 coolant_temp_f,
                 throttle_pct,
-                fuel_rate_gph
+                fuel_rate_gph,
+                battery_soc_pct,
+                hvb_temp_f,
+                pack_voltage_v
             FROM readings
             WHERE trip_id = ?
             ORDER BY ts ASC

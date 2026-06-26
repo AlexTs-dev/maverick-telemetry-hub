@@ -74,7 +74,7 @@ When the engine cuts power to the Pi mid-trip, processes die without a clean shu
 ## Features
 
 - **Automatic trip detection** — opens a trip on ignition on (RPM > 10), closes after 5 minutes of zero RPM or OBD disconnect. Accounts for Maverick Hybrid EV stops at red lights.
-- **1Hz sensor logging** — RPM, speed, coolant temp, throttle position, and fuel rate written to SQLite every second.
+- **1Hz sensor logging** — RPM, speed, coolant temp, throttle position, fuel rate, and HV battery SOC / pack temperature / pack voltage written to SQLite every second.
 - **Post-trip dashboard** — React UI served over local WiFi. Trip history, speed and RPM traces, MPG, and per-trip notes.
 - **AI fault code interpreter** — DTCs sent to Claude for plain-English diagnosis with urgency assessment. Results cached in SQLite.
 - **Native Tauri display** — the dashboard runs as a Tauri app (WebKitGTK) rather than a Chromium kiosk. Eliminates a full browser process, meaningfully reducing CPU load and heat in a thermally constrained cab environment.
@@ -177,7 +177,8 @@ trip_summaries  aggregated stats, 1:1 with trips
 
 Migration versions:
 - **v1** — base schema (trips, readings, dtcs, trip_summaries)
-- **v2** — adds `pack_voltage_v`, `battery_current_a`, `motor_speed_rpm` to readings (Ford Mode 22 PIDs, not currently polled)
+- **v2** — adds `pack_voltage_v`, `battery_current_a`, `motor_speed_rpm` to readings (Ford Mode 22 hybrid PIDs)
+- **v3** — adds `hvb_temp_f` to readings (HV pack temperature, Ford BECM Mode 22 DID 4808)
 
 ---
 
@@ -218,7 +219,8 @@ Each service restarts automatically after 5 seconds on failure.
 - [x] Kiosk mode — Chromium fullscreen on MIPI DSI display
 - [x] Claude API DTC interpreter — plain-English fault code diagnosis
 - [x] Live WebSocket view — real-time gauges and rolling charts
-- [ ] Ford hybrid PID research — Mode 22 PIDs for battery SOC, EV mode, regen on Maverick FHEV
+- [x] Ford hybrid PID research — BECM Mode 22 PIDs polled live: battery SOC (DID 4801), pack temp (4808), pack voltage (480D) on Maverick FHEV
+- [ ] Derive EV mode / regen power from HV current (BECM Mode 22, ~DID 48FB) on Maverick FHEV
 - [ ] Fusion 360 enclosure design (v2)
 - [ ] M.2 HAT+ storage migration (v2)
 - [ ] FITS panel install (v2)

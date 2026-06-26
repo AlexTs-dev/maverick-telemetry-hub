@@ -59,9 +59,15 @@ interface GaugeProps {
   color:  string
   ticks?: number[]   // fractions 0–1 where to draw tick marks
   tickLabels?: { f: number; text: string }[]
+  // Optional secondary readouts shown in the lower flanks (e.g. battery
+  // temp / voltage alongside the SOC arc). Rendered as small SVG text.
+  extras?: {
+    left?:  { value: string; label: string }
+    right?: { value: string; label: string }
+  }
 }
 
-function ArcGauge({ value, max, label, unit, color, ticks, tickLabels }: GaugeProps) {
+function ArcGauge({ value, max, label, unit, color, ticks, tickLabels, extras }: GaugeProps) {
   // ViewBox sized to the container's 2:1 aspect ratio (400px wide, 176px tall)
   const VW = 400, VH = 176
   const cx = 200, cy = 116
@@ -136,6 +142,34 @@ function ArcGauge({ value, max, label, unit, color, ticks, tickLabels }: GaugePr
           style={{ fill: 'hsl(var(--muted-foreground))', fontSize: '10px', letterSpacing: '0.08em' }}>
           {unit.toUpperCase()}
         </text>
+
+        {/* Secondary readouts in the lower flanks (battery temp / voltage) */}
+        {extras?.left && (
+          <g transform="translate(-118,6)">
+            <text textAnchor="middle"
+              style={{ fill: 'hsl(var(--foreground))', fontSize: '15px', fontWeight: 600,
+                       fontVariantNumeric: 'tabular-nums' }}>
+              {extras.left.value}
+            </text>
+            <text y={13} textAnchor="middle"
+              style={{ fill: 'hsl(var(--muted-foreground))', fontSize: '8px', letterSpacing: '0.08em' }}>
+              {extras.left.label.toUpperCase()}
+            </text>
+          </g>
+        )}
+        {extras?.right && (
+          <g transform="translate(118,6)">
+            <text textAnchor="middle"
+              style={{ fill: 'hsl(var(--foreground))', fontSize: '15px', fontWeight: 600,
+                       fontVariantNumeric: 'tabular-nums' }}>
+              {extras.right.value}
+            </text>
+            <text y={13} textAnchor="middle"
+              style={{ fill: 'hsl(var(--muted-foreground))', fontSize: '8px', letterSpacing: '0.08em' }}>
+              {extras.right.label.toUpperCase()}
+            </text>
+          </g>
+        )}
       </g>
 
       {/* Label pinned to bottom centre */}
@@ -316,19 +350,19 @@ export function LivePage() {
         </Badge>
       </div>
 
-      {/* Gauges — 176px, fills width 50/50 */}
+      {/* Gauges — 176px, battery (SOC + temp/voltage) and engine, 50/50 */}
       <div className="grid grid-cols-2 h-[176px] border-b shrink-0 divide-x">
         <ArcGauge
-          value={r?.speed_mph}
-          max={80}
-          label="Speed"
-          unit="mph"
-          color="var(--chart-1)"
-          tickLabels={[
-            { f: 0,    text: '0'  },
-            { f: 0.5,  text: '40' },
-            { f: 1,    text: '80' },
-          ]}
+          value={r?.battery_soc_pct}
+          max={100}
+          label="Battery"
+          unit="%"
+          color="var(--chart-2)"
+          tickLabels={[]}
+          extras={{
+            left:  { value: fmt(r?.hvb_temp_f, 0, '°F'),   label: 'temp' },
+            right: { value: fmt(r?.pack_voltage_v, 0, 'V'), label: 'volts' },
+          }}
         />
         <ArcGauge
           value={r?.rpm}

@@ -112,6 +112,9 @@ function parseReading(message: unknown): LiveReading | null {
     coolant_temp_f:   typeof m.coolant_temp_f   === 'number' ? m.coolant_temp_f   : null,
     throttle_pct:     typeof m.throttle_pct     === 'number' ? m.throttle_pct     : null,
     fuel_rate_gph:    typeof m.fuel_rate_gph    === 'number' ? m.fuel_rate_gph    : null,
+    battery_soc_pct:  typeof m.battery_soc_pct  === 'number' ? m.battery_soc_pct  : null,
+    hvb_temp_f:       typeof m.hvb_temp_f       === 'number' ? m.hvb_temp_f       : null,
+    pack_voltage_v:   typeof m.pack_voltage_v   === 'number' ? m.pack_voltage_v   : null,
   }
 }
 

@@ -124,8 +124,8 @@ function DtcCard({ dtc, onDiagnose, busy }: { dtc: DTC; onDiagnose: () => void; 
 function LoadingSkeleton() {
   return (
     <>
-      <div className="grid grid-cols-3 gap-px bg-border border-b shrink-0">
-        {Array.from({ length: 6 }).map((_, i) => (
+      <div className="grid grid-cols-4 gap-px bg-border border-b shrink-0">
+        {Array.from({ length: 8 }).map((_, i) => (
           <div key={i} className="bg-background flex flex-col items-center py-2 gap-1">
             <Skeleton className="h-4 w-12" />
             <Skeleton className="h-2.5 w-8" />
@@ -181,6 +181,9 @@ export function TripDetailPage() {
 
   const speedVals = pluck(readings, 'speed_mph')
   const rpmVals   = pluck(readings, 'rpm')
+  const socVals   = pluck(readings, 'battery_soc_pct')
+  const tempVals  = pluck(readings, 'hvb_temp_f')
+  const maxTemp   = tempVals.length ? Math.max(...tempVals) : null
 
   return (
     <div className="flex flex-col h-screen">
@@ -219,14 +222,16 @@ export function TripDetailPage() {
       {/* Content */}
       {!loading && !error && trip && (
         <>
-          {/* Stats grid — 2 rows × 3 cols */}
-          <div className="grid grid-cols-3 gap-px bg-border border-b shrink-0">
-            <StatCell label="mpg"     value={fmt(trip.avg_fuel_economy_mpg)} />
-            <StatCell label="avg spd" value={fmt(trip.avg_speed_mph, 0, ' mph')} />
-            <StatCell label="max spd" value={fmt(trip.max_speed_mph, 0, ' mph')} />
-            <StatCell label="avg rpm" value={fmt(trip.avg_rpm, 0)} />
-            <StatCell label="coolant" value={fmt(trip.max_coolant_temp_f, 0, '°F')} />
-            <StatCell label="dist"    value={formatDistance(trip.odometer_start, trip.odometer_end)} />
+          {/* Stats grid — 2 rows × 4 cols */}
+          <div className="grid grid-cols-4 gap-px bg-border border-b shrink-0">
+            <StatCell label="mpg"       value={fmt(trip.avg_fuel_economy_mpg)} />
+            <StatCell label="avg spd"   value={fmt(trip.avg_speed_mph, 0, ' mph')} />
+            <StatCell label="max spd"   value={fmt(trip.max_speed_mph, 0, ' mph')} />
+            <StatCell label="avg rpm"   value={fmt(trip.avg_rpm, 0)} />
+            <StatCell label="coolant"   value={fmt(trip.max_coolant_temp_f, 0, '°F')} />
+            <StatCell label="batt temp" value={fmt(maxTemp, 0, '°F')} />
+            <StatCell label="min soc"   value={fmt(trip.min_battery_soc_pct, 0, '%')} />
+            <StatCell label="dist"      value={formatDistance(trip.odometer_start, trip.odometer_end)} />
           </div>
 
           {/* Scrollable body */}
@@ -250,6 +255,22 @@ export function TripDetailPage() {
                     max={rpmVals.length ? `${Math.max(...rpmVals).toFixed(0)}` : undefined}
                   >
                     <Sparkline values={rpmVals} stroke="hsl(var(--chart-3))" />
+                  </ChartCard>
+
+                  <ChartCard
+                    title="Battery SOC (%)"
+                    min={socVals.length ? `${Math.min(...socVals).toFixed(0)}` : undefined}
+                    max={socVals.length ? `${Math.max(...socVals).toFixed(0)}` : undefined}
+                  >
+                    <Sparkline values={socVals} stroke="hsl(var(--chart-2))" />
+                  </ChartCard>
+
+                  <ChartCard
+                    title="Battery temp (°F)"
+                    min={tempVals.length ? `${Math.min(...tempVals).toFixed(0)}` : undefined}
+                    max={tempVals.length ? `${Math.max(...tempVals).toFixed(0)}` : undefined}
+                  >
+                    <Sparkline values={tempVals} stroke="hsl(var(--chart-4))" />
                   </ChartCard>
                 </div>
               )}

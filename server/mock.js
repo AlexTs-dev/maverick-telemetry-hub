@@ -40,6 +40,7 @@ function nextReading() {
     // Hybrid battery
     const battery_soc_pct  = 65 + Math.sin(t / 120) * 8
     const pack_voltage_v    = 238 + Math.sin(t / 40) * 4
+    const hvb_temp_f        = 92 + Math.sin(t / 90) * 6   // HV pack avg temp
 
     // Current: negative = regen/charging, positive = discharging (EV assist)
     const battery_current_a = evPhase
@@ -70,6 +71,7 @@ function nextReading() {
         pack_voltage_v:   Math.round(pack_voltage_v * 10) / 10,
         battery_current_a: Math.round(battery_current_a * 10) / 10,
         motor_speed_rpm,
+        hvb_temp_f:       Math.round(hvb_temp_f * 10) / 10,
     }
 }
 

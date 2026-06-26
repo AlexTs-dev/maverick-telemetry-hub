@@ -4,3 +4,5 @@
 *.sh      text eol=lf
 *.service text eol=lf
 *.timer   text eol=lf
+# kanshi parses this on the Pi; a trailing CRLF would corrupt the last token.
+deploy/kanshi.config text eol=lf

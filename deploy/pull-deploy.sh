@@ -86,6 +86,49 @@ mkdir -p client/dist
 tar -xzf "$WORK_DIR/client-dist.tar.gz" -C client/dist --overwrite
 
 # ---------------------------------------------------------------------------
+# Kiosk display profile — install the version-controlled kanshi config so the
+# DSI panel's rotation/mode is managed through git and survives a reimage.
+# kanshi reads ~/.config/kanshi/config (labwc-pi only creates an empty one) and
+# applies it on every boot. kanshi 1.5 has no reload IPC, so we also apply it
+# live with wlr-randr when a Wayland session is up. Every step here is
+# non-fatal: a headless or sessionless deploy must never fail the deploy.
+# ---------------------------------------------------------------------------
+install_display_config() {
+  local src="$PROD/deploy/kanshi.config"
+  local cfg_dir="$HOME/.config/kanshi"
+  [ -f "$src" ] || return 0
+  mkdir -p "$cfg_dir"
+  if cmp -s "$src" "$cfg_dir/config" && cmp -s "$src" "$cfg_dir/config.init"; then
+    return 0                                   # both already current — nothing to do
+  fi
+  if ! install -m 644 "$src" "$cfg_dir/config"; then
+    echo "[pull-deploy] WARN: could not install kanshi display config" >&2
+    return 0
+  fi
+  cp "$src" "$cfg_dir/config.init" || true     # re-assert the GUI baseline snapshot too
+  echo "[pull-deploy] Installed managed kanshi display config"
+
+  # Best-effort live apply; kanshi reapplies from the config on next boot.
+  local rt="/run/user/$(id -u)"
+  local sock
+  sock="$(ls "$rt"/wayland-? 2>/dev/null | head -1 || true)"
+  [ -n "$sock" ] || return 0
+  command -v wlr-randr >/dev/null 2>&1 || return 0
+  local out tf
+  out="$(grep -oE 'output [A-Za-z0-9-]+' "$src" | awk '{print $2}' | head -1 || true)"
+  tf="$(grep -oE 'transform [a-z0-9-]+' "$src" | awk '{print $2}' | head -1 || true)"
+  [ -n "$out" ] && [ -n "$tf" ] || return 0
+  # `timeout` bounds the call: a wedged/stale-socket compositor would otherwise
+  # block wlr-randr forever, hanging this oneshot and (via the timer's
+  # OnUnitActiveSec) freezing all future deploys. `env` is needed because
+  # `timeout` doesn't parse leading VAR=val assignments; `|| true` absorbs both
+  # wlr-randr errors and timeout's exit 124.
+  timeout 5 env XDG_RUNTIME_DIR="$rt" WAYLAND_DISPLAY="$(basename "$sock")" \
+    wlr-randr --output "$out" --transform "$tf" >/dev/null 2>&1 || true
+}
+install_display_config || true
+
+# ---------------------------------------------------------------------------
 # Post-deploy
 # ---------------------------------------------------------------------------
 source venv/bin/activate

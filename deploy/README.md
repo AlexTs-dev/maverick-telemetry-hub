@@ -93,11 +93,18 @@ no inbound SSH, no public IP, no secrets on GitHub.
 
 ### One-time Pi setup
 
-Enable passwordless service restarts:
+Enable passwordless service restarts. The path must match what `pull-deploy.sh`
+actually invokes — it calls bare `systemctl`, which resolves to
+`/usr/bin/systemctl`, so use that exact path here:
 ```bash
-echo "pi ALL=(ALL) NOPASSWD: /bin/systemctl restart express_bridge kiosk" \
+echo "pi ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart express_bridge kiosk" \
   | sudo tee /etc/sudoers.d/maverick-deploy
+sudo chmod 440 /etc/sudoers.d/maverick-deploy
+sudo visudo -c   # validate before relying on it
 ```
+This is load-bearing: without it, `pull-deploy.sh`'s final
+`sudo systemctl restart` fails and the whole deploy silently loops (see
+Troubleshooting below).
 
 Make the script executable and install the timer:
 ```bash
@@ -133,6 +140,24 @@ journalctl -u pull-deploy -f
 systemctl status pull-deploy.timer
 ```
 
+### Troubleshooting: deploy "runs" but the app never updates
+
+Symptom: the timer fires every 2 min and the logs show
+`New release: deploy-XXX (was: ...)`, the new binary's mtime updates on disk,
+**but** `express_bridge`/`kiosk` keep their old `ActiveEnterTimestamp` and
+`~/.maverick-deployed-tag` never advances — so the same release re-downloads
+forever.
+
+Cause: the final `sudo systemctl restart express_bridge kiosk` fails (look for
+`pam_unix(sudo:auth)` / "a password is required" in
+`journalctl -u pull-deploy`). Because `pull-deploy.sh` runs `set -euo pipefail`
+and writes the deployed-tag file *after* the restart, it dies before recording
+success — files land on disk but services are never restarted. Almost always the
+`/etc/sudoers.d/maverick-deploy` NOPASSWD entry is missing or has the wrong
+`systemctl` path (see One-time Pi setup). Reinstall it, then run
+`~/maverick-telemetry-hub/deploy/pull-deploy.sh` once to confirm it ends with
+`Deployed deploy-XXX successfully`.
+
 ---
 
 ## Installing the services
@@ -155,6 +180,35 @@ sudo systemctl start  db_writer trip_manager obd_poller express_bridge kiosk pul
 ```
 
 The `kiosk.service` launches the Tauri binary in place of Chromium.
+
+---
+
+## Kiosk display rotation
+
+The in-cab DSI panel runs under **labwc** with **kanshi** managing outputs. Its
+rotation and mode are version-controlled in [`kanshi.config`](kanshi.config);
+`pull-deploy.sh` installs it to `~/.config/kanshi/config` (and mirrors it to
+`config.init`) on every deploy, so the setting survives a reimage and changes
+flow through git like everything else. Pi-5 KMS ignores the legacy
+`display_rotate` in `config.txt`, so kanshi is the mechanism here.
+
+To rotate the screen, edit the `transform` value in `deploy/kanshi.config`
+(`normal` | `90` | `180` for upside-down | `270`), commit, and push. The Pi
+applies it within ~2 minutes (live via `wlr-randr` when a session is up, and on
+every boot when kanshi reads the config). Only `transform` is applied live;
+changing `mode`, `scale`, or `position` takes effect on the next reboot when
+kanshi re-reads the full profile. Do **not** hand-edit `~/.config/kanshi/config`
+on the Pi — the next deploy overwrites it.
+
+A 180° flip also inverts the `ft5x06` touchscreen automatically: wlroots applies
+the output transform to touch input, so no calibration matrix is needed.
+
+On a **fresh image**, before `pull-deploy` has run once, install it by hand:
+```bash
+mkdir -p ~/.config/kanshi
+cp deploy/kanshi.config ~/.config/kanshi/config
+cp deploy/kanshi.config ~/.config/kanshi/config.init
+```
 
 ---
 

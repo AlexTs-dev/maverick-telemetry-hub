@@ -12,6 +12,7 @@ Managed by systemd — see deploy/obd_poller.service
 """
 
 import obd
+from obd.protocols import ECU
 import paho.mqtt.client as mqtt
 import json
 import os
@@ -63,6 +64,7 @@ def _to_mph(v):    return round(v.to("mph").magnitude, 1) if v is not None else 
 def _to_f(v):      return round(v.to("degF").magnitude, 1) if v is not None else None
 def _to_pct(v):    return round(v.magnitude, 1)           if v is not None else None
 def _to_gph(v):    return round(v.magnitude, 3)           if v is not None else None
+def _to_v(v):      return round(v.to("volt").magnitude, 1) if v is not None else None
 def _raw(v):       return v  # decoder already returns a plain number
 
 STANDARD_PIDS = [
@@ -73,7 +75,73 @@ STANDARD_PIDS = [
     (obd.commands.FUEL_RATE,        "fuel_rate_gph",  _to_gph),
 ]
 
-ALL_PIDS = STANDARD_PIDS
+# ---------------------------------------------------------------------------
+# Proprietary Ford Mode 22 PIDs — BECM (Battery Energy Control Module)
+# ---------------------------------------------------------------------------
+# HV battery data is NOT on the standard PCM. It lives in the BECM, which answers
+# UDS service 0x22 (ReadDataByIdentifier) on CAN header 7E4 (response 7EC). These
+# DIDs + scalings were reverse-engineered on-bus and verified against the dash on
+# a 2026 Maverick FHEV (VIN 3FTTW8J34TRA11073, June 2026). See PORTABLE_SPEC.
+#
+# python-obd has no built-in Ford PIDs, so each is a custom OBDCommand:
+#   header=BECM_HEADER → python-obd issues `AT SH 7E4` before the request
+#   _bytes=0           → don't truncate/pad the multi-byte payload
+#   ecu=ECU.ALL        → BECM replies are tagged ECU.UNKNOWN; ECU.ALL keeps them
+#   fast=False         → required for Ford (also set on the connection)
+# These aren't in the auto-detected supported list, so poll_once queries them with
+# force=True. The decoder gets a list of Messages; messages[0].data is the full UDS
+# payload "62 <DID_hi> <DID_lo> <data...>" — strip the 3 echo bytes for the data.
+
+BECM_HEADER = b"7E4"
+
+
+def _becm_command(name, desc, request, decoder):
+    """Build a custom Mode 22 OBDCommand targeting the BECM (header 7E4)."""
+    return obd.OBDCommand(
+        name, desc, request, 0, decoder,
+        ecu=ECU.ALL, fast=False, header=BECM_HEADER,
+    )
+
+
+def _decode_soc(messages):
+    # DID 4801 → 62 48 01 A B; SOC% = (A*256 + B) / 500.0  (verified 0–100%).
+    data = messages[0].data
+    if len(data) < 5:
+        return None
+    return round((data[3] * 256 + data[4]) / 500.0, 2) * obd.Unit.percent
+
+
+def _decode_pack_temp(messages):
+    # DID 4808 → 62 48 08 A B C D; bytes = max/min/range/avg cell temp, each raw-50°C.
+    # Byte D (index 6) is the average pack temp. NOTE: the HV pack uses a -50 offset,
+    # NOT the -40 used for cabin/coolant temps. Returned in °C; _to_f converts to °F.
+    data = messages[0].data
+    if len(data) < 7:
+        return None
+    return obd.Unit.Quantity(data[6] - 50, obd.Unit.celsius)
+
+
+def _decode_pack_voltage(messages):
+    # DID 480D → 62 48 0D A B; Volts = (A*256 + B) / 100.0  (terminal voltage).
+    data = messages[0].data
+    if len(data) < 5:
+        return None
+    return round((data[3] * 256 + data[4]) / 100.0, 1) * obd.Unit.volt
+
+
+# Same (command, output field, converter) shape as STANDARD_PIDS.
+CUSTOM_PIDS = [
+    (_becm_command("HVB_SOC",   "HV battery SOC",   b"224801", _decode_soc),          "battery_soc_pct", _to_pct),
+    (_becm_command("HVB_TEMP",  "HV pack avg temp", b"224808", _decode_pack_temp),    "hvb_temp_f",      _to_f),
+    (_becm_command("HVB_VOLTS", "HV pack voltage",  b"22480D", _decode_pack_voltage), "pack_voltage_v",  _to_v),
+]
+
+# Standard PIDs are auto-detected (force=False); custom BECM PIDs aren't in the
+# supported list and must be forced. Normalize both to (command, field, converter, force).
+ALL_PIDS = (
+    [(cmd, field, conv, False) for cmd, field, conv in STANDARD_PIDS]
+    + [(cmd, field, conv, True) for cmd, field, conv in CUSTOM_PIDS]
+)
 
 # ---------------------------------------------------------------------------
 # MQTT helpers
@@ -147,9 +215,9 @@ def poll_once(connection: obd.OBD) -> dict:
     Missing or errored PIDs produce None values — never raises.
     """
     reading = {"ts": datetime.now(timezone.utc).isoformat()}
-    for command, field, converter in ALL_PIDS:
+    for command, field, converter, force in ALL_PIDS:
         try:
-            response = connection.query(command)
+            response = connection.query(command, force=force)
             reading[field] = converter(response.value) if not response.is_null() else None
         except Exception as e:
             log.warning(f"PID error ({field}): {e}")

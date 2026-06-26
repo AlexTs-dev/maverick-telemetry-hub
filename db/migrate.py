@@ -116,6 +116,13 @@ ALTER TABLE readings ADD COLUMN pack_voltage_v    REAL;
 ALTER TABLE readings ADD COLUMN battery_current_a REAL;
 ALTER TABLE readings ADD COLUMN motor_speed_rpm   INTEGER;
 """,
+
+    3: """
+-- HV battery pack temperature (Ford BECM Mode 22 DID 4808, byte D = average cell
+-- temp, raw-50 = °C). Stored in °F to match coolant_temp_f. SOC and pack voltage
+-- already have columns (battery_soc_pct v1, pack_voltage_v v2), now polled too.
+ALTER TABLE readings ADD COLUMN hvb_temp_f REAL;
+""",
 }
 
 CURRENT_VERSION = max(MIGRATIONS)

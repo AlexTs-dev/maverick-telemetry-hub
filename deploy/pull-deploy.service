@@ -9,6 +9,12 @@ User=pi
 WorkingDirectory=/home/pi/maverick-telemetry-hub
 ExecStart=/home/pi/maverick-telemetry-hub/deploy/pull-deploy.sh
 
+# A oneshot has no default start timeout. Without this, a hung ExecStart would
+# stay "activating" forever and, because pull-deploy.timer is OnUnitActiveSec,
+# freeze all future deploys. Generous enough for a slow first npm install /
+# binary download. (Takes effect after reinstalling the unit + daemon-reload.)
+TimeoutStartSec=600
+
 # Optional: set a GitHub token for higher API rate limits (60 → 5000 req/hr)
 # EnvironmentFile=/home/pi/.maverick-env
 

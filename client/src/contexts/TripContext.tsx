@@ -44,13 +44,16 @@ export interface Trip extends TripSummary {
 }
 
 export interface Reading {
-  id:             number
-  ts:             string
-  rpm:            number | null
-  speed_mph:      number | null
-  coolant_temp_f: number | null
-  throttle_pct:   number | null
-  fuel_rate_gph:  number | null
+  id:              number
+  ts:              string
+  rpm:             number | null
+  speed_mph:       number | null
+  coolant_temp_f:  number | null
+  throttle_pct:    number | null
+  fuel_rate_gph:   number | null
+  battery_soc_pct: number | null  // HV traction battery SOC (Ford BECM Mode 22)
+  hvb_temp_f:      number | null  // HV pack avg temperature
+  pack_voltage_v:  number | null  // HV pack terminal voltage
 }
 
 export interface DTC {
