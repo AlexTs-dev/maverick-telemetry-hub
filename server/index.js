@@ -21,6 +21,8 @@ const { mqttClient, onMessage, getRecentMessages } = require('./mqtt');
 const { createWebSocketServer }      = require('./websocket');
 const tripsRouter                    = require('./routes/trips');
 const dtcsRouter                     = require('./routes/dtcs');
+const versionRouter                  = require('./routes/version');
+const { startPolling }               = require('./version');
 
 const PORT = process.env.PORT || 3000;
 
@@ -33,8 +35,12 @@ app.use(express.json());
 // ---------------------------------------------------------------------------
 // API routes
 // ---------------------------------------------------------------------------
-app.use('/api/trips', tripsRouter);
-app.use('/api/dtcs',  dtcsRouter);
+app.use('/api/trips',   tripsRouter);
+app.use('/api/dtcs',    dtcsRouter);
+app.use('/api/version', versionRouter);
+
+// Begin polling GitHub for the latest release in the background
+startPolling();
 
 // Health check — used by systemd watchdog and for debugging
 app.get('/api/health', (req, res) => {

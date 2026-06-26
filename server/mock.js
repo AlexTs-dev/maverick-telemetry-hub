@@ -136,6 +136,22 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString(), mqtt: 'mock' })
 })
 
+// Version + update check — dev stub. Pretends a newer release exists so the
+// update banner is visible; POST /api/version/update clears it after a moment.
+let mockUpdateAvailable = true
+app.get('/api/version', (req, res) => {
+    res.json({
+        current:         'deploy-99860a3',
+        latest:          mockUpdateAvailable ? 'deploy-a1b2c3d' : 'deploy-99860a3',
+        updateAvailable: mockUpdateAvailable,
+        checkedAt:       new Date().toISOString(),
+    })
+})
+app.post('/api/version/update', (req, res) => {
+    setTimeout(() => { mockUpdateAvailable = false }, 3000)
+    res.json({ status: 'started' })
+})
+
 app.get('/api/trips', (req, res) => res.json(TRIPS))
 
 app.get('/api/trips/:id', (req, res) => {
