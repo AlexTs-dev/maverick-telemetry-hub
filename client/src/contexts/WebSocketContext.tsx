@@ -115,6 +115,7 @@ function parseReading(message: unknown): LiveReading | null {
     battery_soc_pct:  typeof m.battery_soc_pct  === 'number' ? m.battery_soc_pct  : null,
     hvb_temp_f:       typeof m.hvb_temp_f       === 'number' ? m.hvb_temp_f       : null,
     pack_voltage_v:   typeof m.pack_voltage_v   === 'number' ? m.pack_voltage_v   : null,
+    battery_current_a: typeof m.battery_current_a === 'number' ? m.battery_current_a : null,
   }
 }
 

@@ -35,7 +35,7 @@ function fmt(n: number | null, decimals = 1, suffix = '') {
 // Sparkline
 // ---------------------------------------------------------------------------
 
-function Sparkline({ values, stroke = 'hsl(var(--primary))' }: { values: number[]; stroke?: string }) {
+function Sparkline({ values, stroke = 'var(--primary)' }: { values: number[]; stroke?: string }) {
   if (values.length < 2) {
     return (
       <div className="h-12 flex items-center justify-center text-[10px] text-muted-foreground">
@@ -186,7 +186,7 @@ export function TripDetailPage() {
   const maxTemp   = tempVals.length ? Math.max(...tempVals) : null
 
   return (
-    <div className="flex flex-col h-screen">
+    <div className="flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center gap-2 px-3 h-12 border-b shrink-0">
         <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => navigate(-1)}>
@@ -246,7 +246,7 @@ export function TripDetailPage() {
                     min={speedVals.length ? `${Math.min(...speedVals).toFixed(0)}` : undefined}
                     max={speedVals.length ? `${Math.max(...speedVals).toFixed(0)}` : undefined}
                   >
-                    <Sparkline values={speedVals} stroke="hsl(var(--chart-1))" />
+                    <Sparkline values={speedVals} stroke="var(--chart-1)" />
                   </ChartCard>
 
                   <ChartCard
@@ -254,7 +254,7 @@ export function TripDetailPage() {
                     min={rpmVals.length ? `${Math.min(...rpmVals).toFixed(0)}` : undefined}
                     max={rpmVals.length ? `${Math.max(...rpmVals).toFixed(0)}` : undefined}
                   >
-                    <Sparkline values={rpmVals} stroke="hsl(var(--chart-3))" />
+                    <Sparkline values={rpmVals} stroke="var(--chart-3)" />
                   </ChartCard>
 
                   <ChartCard
@@ -262,7 +262,7 @@ export function TripDetailPage() {
                     min={socVals.length ? `${Math.min(...socVals).toFixed(0)}` : undefined}
                     max={socVals.length ? `${Math.max(...socVals).toFixed(0)}` : undefined}
                   >
-                    <Sparkline values={socVals} stroke="hsl(var(--chart-2))" />
+                    <Sparkline values={socVals} stroke="var(--chart-2)" />
                   </ChartCard>
 
                   <ChartCard
@@ -270,7 +270,7 @@ export function TripDetailPage() {
                     min={tempVals.length ? `${Math.min(...tempVals).toFixed(0)}` : undefined}
                     max={tempVals.length ? `${Math.max(...tempVals).toFixed(0)}` : undefined}
                   >
-                    <Sparkline values={tempVals} stroke="hsl(var(--chart-4))" />
+                    <Sparkline values={tempVals} stroke="var(--chart-4)" />
                   </ChartCard>
                 </div>
               )}

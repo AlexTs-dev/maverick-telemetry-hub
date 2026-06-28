@@ -145,7 +145,7 @@ export function TripListPage() {
   const navigate = useNavigate()
 
   return (
-    <div className="flex flex-col h-screen">
+    <div className="flex flex-col h-full">
       {/* Header — 48px */}
       <div className="flex items-center justify-between px-4 h-12 border-b shrink-0">
         <div className="flex items-baseline gap-2">

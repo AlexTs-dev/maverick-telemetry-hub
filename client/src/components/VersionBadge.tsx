@@ -6,7 +6,7 @@
 export function VersionBadge({ version }: { version: string }) {
   return (
     <span
-      className="fixed bottom-1 right-2 z-40 select-none pointer-events-none
+      className="fixed bottom-16 right-2 z-40 select-none pointer-events-none
                  text-[10px] leading-none tabular-nums text-muted-foreground/60"
     >
       v{version}

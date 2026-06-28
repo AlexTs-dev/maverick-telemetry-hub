@@ -155,7 +155,7 @@ export function DiagnosticsPage() {
   const diagnosed   = dtcs.filter(d =>  d.claude_diagnosis)
 
   return (
-    <div className="flex flex-col h-screen">
+    <div className="flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center justify-between px-4 h-12 border-b shrink-0">
         <div className="flex items-baseline gap-2">

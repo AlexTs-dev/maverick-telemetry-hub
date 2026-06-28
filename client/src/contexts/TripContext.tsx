@@ -54,6 +54,7 @@ export interface Reading {
   battery_soc_pct: number | null  // HV traction battery SOC (Ford BECM Mode 22)
   hvb_temp_f:      number | null  // HV pack avg temperature
   pack_voltage_v:  number | null  // HV pack terminal voltage
+  battery_current_a: number | null  // HV pack current; negative = charging/regen
 }
 
 export interface DTC {

@@ -14,6 +14,10 @@ export const router = createBrowserRouter([
     children: [
       {
         index: true,
+        element: <LivePage />,
+      },
+      {
+        path: 'trips',
         element: <TripListPage />,
       },
       {

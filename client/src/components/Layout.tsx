@@ -9,6 +9,7 @@ import { Outlet } from 'react-router-dom'
 import { useVersion } from '@/hooks/useVersion'
 import { VersionBadge } from './VersionBadge'
 import { UpdateBanner } from './UpdateBanner'
+import { BottomNav } from './BottomNav'
 
 export function Layout() {
   const { appVersion, current, latest, updateAvailable, updating, error, triggerUpdate } = useVersion()
@@ -18,7 +19,7 @@ export function Layout() {
   const showBanner = updateAvailable && (!dismissed || updating)
 
   return (
-    <div className="min-h-screen">
+    <div className="flex flex-col h-screen overflow-hidden">
       {showBanner && (
         <UpdateBanner
           current={current}
@@ -29,9 +30,10 @@ export function Layout() {
           onDismiss={() => setDismissed(true)}
         />
       )}
-      <main>
+      <main className="flex-1 min-h-0">
         <Outlet />
       </main>
+      <BottomNav />
       <VersionBadge version={appVersion} />
     </div>
   )

@@ -2,6 +2,7 @@ import { useRef, useEffect, useState } from 'react'
 import * as d3 from 'd3'
 import { useLiveTelemetry } from '@/contexts/WebSocketContext'
 import type { LiveReading, PollerStatus } from '@/contexts/WebSocketContext'
+import { IconBoltFilled } from '@tabler/icons-react'
 import { Badge } from '@/components/ui/badge'
 import { cn }   from '@/lib/utils'
 
@@ -20,6 +21,18 @@ const IH   = VB_H - M.top  - M.bottom
 
 function fmt(n: number | null | undefined, dec = 0, suffix = '') {
   return n != null ? `${n.toFixed(dec)}${suffix}` : '—'
+}
+
+// Instantaneous fuel economy. Raw gph telemetry is precise but unintuitive
+// while driving — convert to MPG (distance ÷ fuel burned), the number a driver
+// actually reads. Handle the hybrid edge cases so it never divides by zero or
+// shows a nonsense figure.
+function instantMpg(speed: number | null | undefined, gph: number | null | undefined): string {
+  if (speed == null || gph == null) return '—'
+  if (gph < 0.02) return 'EV'                 // engine off / no fuel burn (electric or coasting)
+  if (speed < 1)  return '0 mpg'              // idling: burning fuel, going nowhere
+  const mpg = speed / gph
+  return mpg > 99 ? '99+ mpg' : `${mpg.toFixed(mpg < 10 ? 1 : 0)} mpg`
 }
 
 // ---------------------------------------------------------------------------
@@ -85,15 +98,12 @@ function ArcGauge({ value, max, label, unit, color, ticks, tickLabels, extras }:
   ]
   const labels = tickLabels ?? defaultLabels
 
-  // Needle tip and line
-  const tip = pt(RI - 6, va)
-
   return (
     <svg viewBox={`0 0 ${VW} ${VH}`} className="w-full h-full" preserveAspectRatio="xMidYMid meet">
       <g transform={`translate(${cx},${cy})`}>
 
         {/* Background ring */}
-        <path d={ringPath(RO, RI, SA, EA)} fill="hsl(var(--muted))" />
+        <path d={ringPath(RO, RI, SA, EA)} fill="var(--muted)" />
 
         {/* Value ring */}
         {pct > 0.001 && (
@@ -108,7 +118,7 @@ function ArcGauge({ value, max, label, unit, color, ticks, tickLabels, extras }:
           return (
             <line key={i}
               x1={inner.x} y1={inner.y} x2={outer.x} y2={outer.y}
-              stroke="hsl(var(--muted-foreground))" strokeWidth={1} opacity={0.4}
+              stroke="var(--muted-foreground)" strokeWidth={1} opacity={0.4}
             />
           )
         })}
@@ -120,26 +130,20 @@ function ArcGauge({ value, max, label, unit, color, ticks, tickLabels, extras }:
           return (
             <text key={i} x={p.x} y={p.y}
               textAnchor="middle" dominantBaseline="middle"
-              style={{ fill: 'hsl(var(--muted-foreground))', fontSize: '11px' }}>
+              style={{ fill: 'var(--muted-foreground)', fontSize: '11px' }}>
               {text}
             </text>
           )
         })}
 
-        {/* Needle */}
-        <line x1={0} y1={0} x2={tip.x} y2={tip.y}
-          stroke="hsl(var(--foreground))" strokeWidth={2.5} strokeLinecap="round" />
-        <circle r={7} fill="hsl(var(--background))"
-          stroke="hsl(var(--foreground))" strokeWidth={2} />
-
         {/* Value text */}
         <text y={26} textAnchor="middle"
-          style={{ fill: 'hsl(var(--foreground))', fontSize: '28px', fontWeight: 700,
+          style={{ fill: 'var(--foreground)', fontSize: '28px', fontWeight: 700,
                    fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.5px' }}>
           {value != null ? Math.round(value) : '—'}
         </text>
         <text y={42} textAnchor="middle"
-          style={{ fill: 'hsl(var(--muted-foreground))', fontSize: '10px', letterSpacing: '0.08em' }}>
+          style={{ fill: 'var(--muted-foreground)', fontSize: '10px', letterSpacing: '0.08em' }}>
           {unit.toUpperCase()}
         </text>
 
@@ -147,12 +151,12 @@ function ArcGauge({ value, max, label, unit, color, ticks, tickLabels, extras }:
         {extras?.left && (
           <g transform="translate(-118,6)">
             <text textAnchor="middle"
-              style={{ fill: 'hsl(var(--foreground))', fontSize: '15px', fontWeight: 600,
+              style={{ fill: 'var(--foreground)', fontSize: '15px', fontWeight: 600,
                        fontVariantNumeric: 'tabular-nums' }}>
               {extras.left.value}
             </text>
             <text y={13} textAnchor="middle"
-              style={{ fill: 'hsl(var(--muted-foreground))', fontSize: '8px', letterSpacing: '0.08em' }}>
+              style={{ fill: 'var(--muted-foreground)', fontSize: '8px', letterSpacing: '0.08em' }}>
               {extras.left.label.toUpperCase()}
             </text>
           </g>
@@ -160,12 +164,12 @@ function ArcGauge({ value, max, label, unit, color, ticks, tickLabels, extras }:
         {extras?.right && (
           <g transform="translate(118,6)">
             <text textAnchor="middle"
-              style={{ fill: 'hsl(var(--foreground))', fontSize: '15px', fontWeight: 600,
+              style={{ fill: 'var(--foreground)', fontSize: '15px', fontWeight: 600,
                        fontVariantNumeric: 'tabular-nums' }}>
               {extras.right.value}
             </text>
             <text y={13} textAnchor="middle"
-              style={{ fill: 'hsl(var(--muted-foreground))', fontSize: '8px', letterSpacing: '0.08em' }}>
+              style={{ fill: 'var(--muted-foreground)', fontSize: '8px', letterSpacing: '0.08em' }}>
               {extras.right.label.toUpperCase()}
             </text>
           </g>
@@ -174,7 +178,7 @@ function ArcGauge({ value, max, label, unit, color, ticks, tickLabels, extras }:
 
       {/* Label pinned to bottom centre */}
       <text x={cx} y={VH - 6} textAnchor="middle"
-        style={{ fill: 'hsl(var(--muted-foreground))', fontSize: '9px', letterSpacing: '0.1em' }}>
+        style={{ fill: 'var(--muted-foreground)', fontSize: '9px', letterSpacing: '0.1em' }}>
         {label.toUpperCase()}
       </text>
     </svg>
@@ -206,6 +210,72 @@ function StatCell({ label, value }: { label: string; value: string }) {
     <div className="flex flex-col items-center justify-center border-r last:border-r-0">
       <span className="text-lg font-semibold tabular-nums leading-none">{value}</span>
       <span className="text-[9px] text-muted-foreground uppercase tracking-wider mt-1">{label}</span>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Battery gauge — phone-style fill bar for HV pack state of charge
+// ---------------------------------------------------------------------------
+// A vertical rounded battery body with a terminal nub on top. The inner bar
+// fills bottom→top with SOC and animates between readings, the way a phone
+// battery does. The percentage sits inside the body; colour shifts
+// green → amber → red as charge drops.
+
+function BatteryGauge({ soc, tempF, volts, charging }: {
+  soc:      number | null | undefined
+  tempF:    number | null | undefined
+  volts:    number | null | undefined
+  charging: boolean
+}) {
+  const pct = soc != null ? Math.min(Math.max(soc, 0), 100) : 0
+
+  const fill =
+    soc == null ? 'var(--muted)'        :
+    pct <= 10   ? 'var(--destructive)'  :
+    pct <= 20   ? 'oklch(0.8 0.16 85)'  :   // amber
+                  'var(--chart-2)'          // green
+
+  return (
+    <div className="flex items-center justify-center h-full gap-6 px-4">
+      {/* Vertical battery: terminal nub on top, fills bottom → top */}
+      <div className="flex flex-col items-center">
+        <div className="h-[5px] w-7 rounded-t-[3px] bg-foreground/70" />
+        <div className="relative flex h-[122px] w-[66px] flex-col-reverse overflow-hidden rounded-[10px] border-[3px] border-foreground/70 p-1">
+          {/* Fill bar, anchored to the bottom via flex-col-reverse. Pulses while charging. */}
+          <div
+            className={cn(
+              'w-full shrink-0 rounded-[5px] transition-[height] duration-700 ease-out',
+              charging && 'animate-pulse',
+            )}
+            style={{ height: `${pct}%`, backgroundColor: fill }}
+          />
+          {/* Charge bolt + percentage, centred inside the battery */}
+          <div
+            className="absolute inset-0 flex flex-col items-center justify-center gap-0.5 leading-none"
+            style={{ textShadow: '0 1px 3px rgba(0,0,0,0.55)' }}
+          >
+            {charging && <IconBoltFilled size={15} className="text-foreground" />}
+            <span className="text-2xl font-bold tabular-nums text-foreground">
+              {soc != null ? Math.round(soc) : '—'}
+              {soc != null && <span className="text-sm font-semibold text-foreground/90">%</span>}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Secondary readouts — pack temp and voltage */}
+      <div className="flex flex-col items-start gap-3">
+        <div className="leading-none">
+          <div className="text-base font-semibold tabular-nums">{tempF != null ? `${Math.round(tempF)}°F` : '—'}</div>
+          <div className="text-[8px] text-muted-foreground uppercase tracking-wider mt-1">temp</div>
+        </div>
+        <div className="leading-none">
+          <div className="text-base font-semibold tabular-nums">{volts != null ? `${Math.round(volts)}V` : '—'}</div>
+          <div className="text-[8px] text-muted-foreground uppercase tracking-wider mt-1">volts</div>
+        </div>
+        <span className="text-[9px] text-muted-foreground uppercase tracking-[0.1em] mt-1">Battery</span>
+      </div>
     </div>
   )
 }
@@ -332,7 +402,7 @@ export function LivePage() {
     'unknown'
 
   return (
-    <div className="flex flex-col h-screen">
+    <div className="flex flex-col h-full">
 
       {/* Header — 48px */}
       <div className="flex items-center justify-between px-4 h-12 border-b shrink-0">
@@ -352,17 +422,11 @@ export function LivePage() {
 
       {/* Gauges — 176px, battery (SOC + temp/voltage) and engine, 50/50 */}
       <div className="grid grid-cols-2 h-[176px] border-b shrink-0 divide-x">
-        <ArcGauge
-          value={r?.battery_soc_pct}
-          max={100}
-          label="Battery"
-          unit="%"
-          color="var(--chart-2)"
-          tickLabels={[]}
-          extras={{
-            left:  { value: fmt(r?.hvb_temp_f, 0, '°F'),   label: 'temp' },
-            right: { value: fmt(r?.pack_voltage_v, 0, 'V'), label: 'volts' },
-          }}
+        <BatteryGauge
+          soc={r?.battery_soc_pct}
+          tempF={r?.hvb_temp_f}
+          volts={r?.pack_voltage_v}
+          charging={(r?.battery_current_a ?? 0) < 0}
         />
         <ArcGauge
           value={r?.rpm}
@@ -382,7 +446,7 @@ export function LivePage() {
       <div className="grid grid-cols-3 h-[52px] border-b shrink-0">
         <StatCell label="coolant"  value={fmt(r?.coolant_temp_f, 0, '°F')} />
         <StatCell label="throttle" value={fmt(r?.throttle_pct, 0, '%')} />
-        <StatCell label="fuel"     value={fmt(r?.fuel_rate_gph, 3, ' gph')} />
+        <StatCell label="economy"  value={instantMpg(r?.speed_mph, r?.fuel_rate_gph)} />
       </div>
 
       {/* Charts — fill remaining ~204px */}
