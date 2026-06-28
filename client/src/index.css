@@ -246,4 +246,10 @@
   html {
     @apply font-sans;
     }
+  /* In-cab kiosk is a fullscreen touchscreen with no mouse — hide the pointer
+     entirely. !important so interactive widgets that set cursor: pointer
+     (buttons, links, inputs) don't re-show it. */
+  *, *::before, *::after {
+    cursor: none !important;
+    }
 }

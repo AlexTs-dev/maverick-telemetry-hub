@@ -11,7 +11,7 @@
 
 ## In the car
 
-![Mounted display showing live telemetry](docs/PXL_20260531_2334220612.jpg)
+![Mounted display showing live telemetry](docs/PXL_20260628_1450322172.jpg)
 
 *5" touchscreen mounted in the cab — live speed and RPM traces, coolant temp, throttle, and fuel rate.*
 
