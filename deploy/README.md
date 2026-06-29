@@ -1,293 +1,287 @@
-# Maverick Telemetry Hub
+# Deployment — Maverick Telemetry Hub
 
-> An offline-first, AI-enhanced vehicle telemetry system built for a 2026 Ford Maverick Hybrid — running on a Raspberry Pi 5, mounted in the cab.
+Installation, kiosk, display, and over-the-air update setup for running the
+hub on a Raspberry Pi 5. For the project overview, architecture, and API
+reference, see the [main README](../README.md).
 
-![Status](https://img.shields.io/badge/status-operational-brightgreen)
-![Stack](https://img.shields.io/badge/stack-Python%20%7C%20MQTT%20%7C%20Node.js%20%7C%20React-blue)
-![Hardware](https://img.shields.io/badge/hardware-Raspberry%20Pi%205%20%7C%20OBDLink%20EX-teal)
-![License](https://img.shields.io/badge/license-MIT-green)
-
----
-
-## In the car
-
-![Mounted display showing live telemetry](docs/PXL_20260628_1450322172.jpg)
-
-*5" touchscreen mounted in the cab — live speed and RPM traces, coolant temp, throttle, and hybrid battery metrics.*
+Everything below assumes the repo is checked out at
+`/home/pi/maverick-telemetry-hub` and the service user is `pi`. The systemd
+units hardcode these paths — adjust them if your layout differs.
 
 ---
 
-## Dashboard
+## Contents of `deploy/`
 
-![Trip list](docs/Screenshot%202026-05-31%20210531.png)
-
-*Trip history with MPG, average speed, and DTC badge for any trip with fault codes.*
-
-![Trip detail](docs/Screenshot%202026-05-31%20210608.png)
-
-*Per-trip detail: summary stats, AI-interpreted fault code (P0D0B diagnosed by Claude), and trip notes.*
-
----
-
-## What this is
-
-A full-stack edge telemetry system that reads live OBD-II data from a 2026 Ford Maverick Hybrid, processes it locally on a Raspberry Pi 5, and persists every trip to a local SQLite database — with no cloud dependency.
-
-After each drive, a React dashboard served over local WiFi provides post-trip analysis: speed and RPM traces, fuel economy stats, and trip history. An AI layer interprets any OBD-II fault codes (DTCs) in plain English using the Claude API. Results are cached in SQLite — the API is called once per code, never again.
-
-The system powers on automatically with the ignition and requires no interaction to begin logging.
+| File | Purpose |
+| --- | --- |
+| `db_writer.service` | systemd unit — MQTT → SQLite writer |
+| `trip_manager.service` | systemd unit — trip lifecycle state machine |
+| `obd_poller.service` | systemd unit — OBD-II sensor poller |
+| `express_bridge.service` | systemd unit — Express REST + WebSocket bridge |
+| `kiosk.service` | systemd unit — launches the Tauri dashboard fullscreen |
+| `kiosk-start.sh` | Detects the Wayland socket, disables the WebKit DMABUF renderer, launches the Tauri binary |
+| `kanshi.config` | Version-controlled DSI panel rotation/mode profile |
+| `pull-deploy.sh` | Polls GitHub Releases and applies new builds |
+| `pull-deploy.service` | systemd oneshot that runs `pull-deploy.sh` |
+| `pull-deploy.timer` | Triggers the oneshot 30s after boot, then every 2 minutes |
 
 ---
 
-## Architecture
+## Prerequisites
 
-```
-2026 Maverick Hybrid (OBD-II)
-        |
-   OBDLink EX (USB)
-        |
-   Raspberry Pi 5
-   ├── obd_poller.py     polls sensors at 1Hz, publishes to MQTT
-   ├── trip_manager.py   detects ignition on/off, manages trip lifecycle
-   ├── db_writer.py      subscribes to MQTT, writes all data to SQLite
-   └── server/
-       └── index.js      Express + WebSocket bridge, serves React dashboard
-              |
-        React Dashboard (client/)
-        ├── Live view     real-time gauges + rolling D3 charts
-        ├── Trip list     history with summary stats
-        └── Trip detail   per-trip traces, stats, DTCs, notes
-              |
-        Claude API        DTC fault code interpretation
+- Raspberry Pi 5 running Raspberry Pi OS (Bookworm, 64-bit) with the **labwc**
+  Wayland session (the default in-cab display stack; `kanshi` manages outputs).
+- Node.js (system `node` at `/usr/bin/node`) and `npm`.
+- Python 3 with `venv`.
+- An OBDLink EX on USB. `lsusb` should show it as `0403:6015` (FTDI),
+  typically `/dev/ttyUSB0`.
+- A Rust toolchain **if you build the Tauri binary on the Pi** (not required if
+  you deploy prebuilt release binaries via the OTA flow below).
+
+---
+
+## 1. System dependencies
+
+```bash
+sudo apt update && sudo apt install -y mosquitto mosquitto-clients
+sudo systemctl enable --now mosquitto
 ```
 
-### Process isolation
+### USB access for the OBDLink EX
 
-Each Python process has a single responsibility and communicates only via MQTT. The Express bridge is the only process that reads SQLite. `db_writer.py` is the only process that writes to it. If any process crashes, systemd restarts it independently without affecting the others.
+The poller runs as `pi`, so the user needs non-root serial access:
 
-### Power-loss recovery
-
-When the engine cuts power to the Pi mid-trip, processes die without a clean shutdown — `trip_manager` never publishes `trip_close`, so the trip stays open in the database with no summary. On next boot, `db_writer` automatically recovers any unclosed trips: it sets `ended_at` to the last committed reading's timestamp, computes duration, and generates the trip summary from whatever readings were saved. No manual intervention needed.
-
----
-
-## Features
-
-- **Automatic trip detection** — opens a trip on ignition on (RPM > 10), closes after 5 minutes of zero RPM or OBD disconnect. Accounts for Maverick Hybrid EV stops at red lights.
-- **1Hz sensor logging** — RPM, speed, coolant temp, throttle position, fuel rate, and HV battery SOC / pack temperature / pack voltage written to SQLite every second.
-- **Post-trip dashboard** — React UI served over local WiFi. Trip history, speed and RPM traces, MPG, and per-trip notes.
-- **AI fault code interpreter** — DTCs sent to Claude for plain-English diagnosis with urgency assessment. Results cached in SQLite.
-- **Native Tauri display** — the dashboard runs as a Tauri app (WebKitGTK) rather than a Chromium kiosk. Eliminates a full browser process, meaningfully reducing CPU load and heat in a thermally constrained cab environment.
-- **Live kiosk view** — real-time gauges and 5-minute rolling charts via WebSocket. Designed for glanceable display while driving.
-- **Offline-first** — core telemetry runs with zero network dependency. AI features degrade gracefully without connectivity.
-- **Power-loss resilient** — trip data is committed reading-by-reading; unclosed trips are recovered automatically on reboot.
-
----
-
-## Hybrid PID discovery
-
-The 2026 Maverick Hybrid's high-voltage battery data isn't exposed through standard OBD-II PIDs — it lives behind Ford proprietary Mode 22 PIDs with no public documentation. The PIDs were surfaced another way: using the Claude API to systematically probe the vehicle's ECUs, querying Mode 22 across candidate modules and validating the responses against expected values until the BECM PIDs reporting real hybrid data were identified and confirmed. The dashboard now reads live, validated hybrid telemetry.
-
-Confirmed BECM Mode 22 PIDs on the Maverick FHEV: battery SOC (DID 4801), pack temperature (DID 4808), pack voltage (DID 480D).
-
----
-
-## Hardware
-
-| Component      | Details                                                       |
-| -------------- | ------------------------------------------------------------- |
-| Edge computer  | Raspberry Pi 5 (4GB)                                          |
-| Storage        | Raspberry Pi M.2 HAT+ with WD SN740 M.2 2230 NVMe (256GB)     |
-| OBD-II adapter | OBDLink EX (USB)                                              |
-| Display        | Hosyond 5" IPS Capacitive Touchscreen, 800×480, MIPI DSI      |
-| Enclosure      | Custom PETG, designed in Fusion 360                           |
-| Mount          | Glued magnetic ring → standard air-register phone mount       |
-| Power          | Auxiliary power outlet (12V), ignition-switched               |
-
-The magnetic ring on the back of the enclosure mates with any standard magnetic phone holder, making the unit trivially relocatable and not tied to one vehicle's trim.
-
----
-
-## Tech stack
-
-| Layer            | Technology                                    |
-| ---------------- | --------------------------------------------- |
-| Sensor polling   | Python, python-obd                            |
-| Message broker   | MQTT (Mosquitto)                              |
-| Trip management  | Python state machine                          |
-| Database         | SQLite (WAL mode, versioned migrations)       |
-| Backend / bridge | Node.js, Express, WebSockets, better-sqlite3  |
-| Frontend         | React, TypeScript, Vite, Tailwind CSS         |
-| Display runtime  | Tauri 2 (WebKitGTK — replaces Chromium kiosk) |
-| Charts           | D3                                            |
-| AI integration   | Claude API (claude-sonnet-4-6)                |
-
----
-
-## Repository structure
-
+```bash
+sudo usermod -a -G dialout pi   # log out/in (or reboot) for it to take effect
 ```
-maverick-telemetry-hub/
-├── db/
-│   ├── migrate.py              SQLite schema + versioned migrations
-│   └── seed.sql                Development seed data
-├── obd_poller.py               OBD-II sensor polling process
-├── trip_manager.py             Trip lifecycle state machine
-├── db_writer.py                MQTT subscriber → SQLite writer (with boot recovery)
-├── server/
-│   ├── index.js                Express entry point
-│   ├── mqtt.js                 MQTT client and subscription
-│   ├── websocket.js            WebSocket server and broadcast
-│   ├── db.js                   SQLite connection
-│   └── routes/
-│       ├── trips.js            Trip list, detail, readings endpoints
-│       └── dtcs.js             Fault code endpoints + Claude diagnosis
-├── client/                     React dashboard (Vite + Tailwind)
-├── docs/                       Screenshots and photos
-├── deploy/
-│   ├── obd_poller.service      systemd unit
-│   ├── trip_manager.service    systemd unit
-│   ├── db_writer.service       systemd unit
-│   ├── express_bridge.service  systemd unit
-│   ├── kiosk.service           systemd unit (Tauri app, fullscreen on MIPI DSI)
-│   └── README.md               Deployment instructions
-└── README.md
+
+The `obd_poller.service` unit expects the adapter at `/dev/ttyUSB0` and
+`115200` baud (`OBD_PORT` / `OBD_BAUDRATE`). If your adapter enumerates on a
+different port, add a `udev` rule or update the unit's environment.
+
+---
+
+## 2. Python environment
+
+```bash
+cd /home/pi/maverick-telemetry-hub
+python3 -m venv venv && source venv/bin/activate
+pip install obd paho-mqtt
 ```
 
 ---
 
-## API reference
+## 3. Database
 
-| Method | Endpoint                  | Description                                      |
-| ------ | ------------------------- | ------------------------------------------------ |
-| GET    | `/api/trips`              | All trips, most recent first, with summary stats |
-| GET    | `/api/trips/:id`          | Single trip with summary                         |
-| GET    | `/api/trips/:id/readings` | All sensor readings for a trip                   |
-| GET    | `/api/trips/:id/dtcs`     | Fault codes for a trip                           |
-| GET    | `/api/dtcs`               | All fault codes across all trips                 |
-| POST   | `/api/dtcs/:id/diagnose`  | Fetch Claude diagnosis for a DTC (cached)        |
-| GET    | `/api/health`             | Server health + MQTT connection status           |
+The live database lives at `/home/pi/maverick_telemetry.db`. This path is set
+via `MAVERICK_DB_PATH` in the `db_writer`, `trip_manager`, and
+`express_bridge` units — **it must match across all of them and the migration
+command**, or services will read a different database than the one being
+migrated.
 
----
-
-## Database schema
-
-Four tables. `trip_summaries` is computed once on trip close (or on boot recovery) — never recalculated at query time.
-
-```
-trips           one row per ignition cycle
-readings        raw 1Hz sensor stream, foreign key → trips
-dtcs            fault code events, foreign key → trips
-trip_summaries  aggregated stats, 1:1 with trips
+```bash
+MAVERICK_DB_PATH=/home/pi/maverick_telemetry.db python db/migrate.py
 ```
 
-Migration versions:
-
-- **v1** — base schema (trips, readings, dtcs, trip_summaries)
-- **v2** — adds `pack_voltage_v`, `battery_current_a`, `motor_speed_rpm` to readings (Ford Mode 22 hybrid PIDs)
-- **v3** — adds `hvb_temp_f` to readings (HV pack temperature, Ford BECM Mode 22 DID 4808)
+`migrate.py` is idempotent and only applies pending schema versions, so it is
+safe to re-run on every deploy.
 
 ---
 
-## MQTT topic map
+## 4. Express bridge
 
-| Topic                              | Publisher     | Description             |
-| ---------------------------------- | ------------- | ----------------------- |
-| `maverick/telemetry/reading`       | obd_poller    | Raw sensor reading, 1Hz |
-| `maverick/telemetry/poller_status` | obd_poller    | OBD connection state    |
-| `maverick/telemetry/trip_open`     | trip_manager  | Trip started            |
-| `maverick/telemetry/trip_close`    | trip_manager  | Trip ended              |
-| `maverick/telemetry/dtc`           | obd_poller    | Fault code detected     |
+```bash
+cd /home/pi/maverick-telemetry-hub/server
+npm install --omit=dev
+```
+
+Create `server/.env` with the API key and (optionally) the port:
+
+```bash
+ANTHROPIC_API_KEY=your_key_here
+PORT=3000
+```
+
+`express_bridge.service` loads this file and also sets `NODE_ENV=production`
+and `MAVERICK_DB_PATH`. The DTC interpreter is the only feature that needs the
+key; the bridge runs fine without it (diagnosis requests just fail gracefully).
+
+The unit's `ExecStartPre` asserts that `client/dist/index.html` exists before
+starting, so build the client (next step) first.
 
 ---
 
-## Boot order
+## 5. React client
 
-Services start in this order via systemd dependencies:
+```bash
+cd /home/pi/maverick-telemetry-hub/client
+npm install
+npm run build        # outputs client/dist, served by the Express bridge
+```
+
+The bridge serves this build at `http://<pi-ip>:3000`. Rebuild after any
+frontend change (or let the OTA flow ship a prebuilt `client-dist.tar.gz`).
+
+---
+
+## 6. Tauri in-cab display
+
+The in-cab screen runs the dashboard as a native Tauri app (WebKitGTK), not a
+browser. Build the release binary on the Pi:
+
+```bash
+cd /home/pi/maverick-telemetry-hub/client
+npm run tauri build
+# → client/src-tauri/target/release/maverick-telemetry
+```
+
+`kiosk.service` launches it through `kiosk-start.sh`, which:
+
+- auto-detects the Wayland socket (`wayland-0` / `wayland-1`) under
+  `/run/user/1000`, falling back to `DISPLAY=:0`;
+- exports `WEBKIT_DISABLE_DMABUF_RENDERER=1` — the DMABUF renderer corrupts the
+  display on the Pi's V3D GPU (colored-pixel artifacts over black); disabling it
+  forces a stable path while keeping accelerated compositing on;
+- waits (via the unit's `ExecStartPre`) for `GET /api/health` to return before
+  opening the window, retrying for up to 30 seconds.
+
+### Display rotation
+
+The DSI panel's orientation and mode are version-controlled in
+`deploy/kanshi.config`:
+
+```
+profile {
+	output DSI-2 enable scale 1.000000 mode 800x480@60.029 position 0,0 transform 180
+}
+```
+
+`transform` accepts `normal | 90 | 180 (upside-down) | 270`. `pull-deploy.sh`
+installs this file to `~/.config/kanshi/config` (and `config.init`) on every
+deploy and applies it live via `wlr-randr` when a Wayland session is up; kanshi
+reapplies it on every boot. **Do not hand-edit `~/.config/kanshi/config` on the
+Pi — the next deploy overwrites it.** Change rotation by editing
+`deploy/kanshi.config` and deploying.
+
+---
+
+## 7. Install and start the services
+
+```bash
+sudo cp deploy/*.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now db_writer trip_manager obd_poller express_bridge kiosk
+```
+
+### Boot order
+
+systemd dependencies enforce this order:
 
 ```
 mosquitto → db_writer → trip_manager → obd_poller
                      → express_bridge → kiosk
 ```
 
-Each service restarts automatically after 5 seconds on failure.
+`db_writer` comes up first so trip-open events are never missed; `obd_poller`
+starts last so it only publishes once consumers are ready. The bridge and
+kiosk start in parallel with the pollers. Every long-running unit restarts
+automatically (`Restart=always`/`on-failure`, `RestartSec=5`).
 
----
-
-## Project status
-
-The system is built, installed, and running on real hardware in the vehicle.
-
-- [x] SQLite schema and migration script
-- [x] `obd_poller.py` — sensor polling with reconnect backoff
-- [x] `trip_manager.py` — ignition detection state machine
-- [x] `db_writer.py` — MQTT → SQLite with retry logic and boot recovery
-- [x] systemd service files for all processes
-- [x] Express bridge — REST API + WebSocket server
-- [x] React dashboard — trip list, trip detail, sensor charts
-- [x] Tauri display — fullscreen on MIPI DSI (replaced Chromium kiosk; resolved thermal throttling)
-- [x] Claude API DTC interpreter — plain-English fault code diagnosis
-- [x] Live WebSocket view — real-time gauges and rolling charts
-- [x] Ford hybrid PID discovery — BECM Mode 22 PIDs polled live: battery SOC (DID 4801), pack temp (4808), pack voltage (480D) on Maverick FHEV
-- [x] Fusion 360 PETG enclosure — designed, printed, and mounted
-- [x] M.2 HAT+ storage migration — running off NVMe
-- [x] In-vehicle install — air-register phone mount + glued magnetic ring
-- [x] Derived EV mode / regen power from HV current (BECM Mode 22, DID 48FB) on Maverick FHEV
-
----
-
-## Setup
-
-See [deploy/README.md](deploy/README.md) for full installation instructions.
-
-**Quick start:**
+Tail logs with:
 
 ```bash
-# 1. Install system dependencies
-sudo apt update && sudo apt install -y mosquitto mosquitto-clients
-sudo usermod -a -G dialout pi  # USB access for OBDLink EX
-
-# 2. Python environment
-python3 -m venv venv && source venv/bin/activate
-pip install obd paho-mqtt
-
-# 3. Initialize database
-python db/migrate.py
-
-# 4. Node environment
-cd server && npm install && cd ..
-
-# 5. Build React client
-cd client && npm install && npm run build && cd ..
-
-# 6. Create environment file
-echo "ANTHROPIC_API_KEY=your_key_here" > server/.env
-
-# 7. Install and start services
-sudo cp deploy/*.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now db_writer trip_manager obd_poller express_bridge kiosk
+journalctl -u db_writer -f       # or trip_manager / obd_poller / express_bridge / kiosk
 ```
 
-Dashboard is available at `http://<pi-ip>:3000` from any device on the same WiFi network.
+---
+
+## 8. Over-the-air updates (pull-deploy)
+
+The Pi keeps itself current by polling GitHub Releases — no inbound SSH and no
+self-hosted runner; the only requirement is outbound HTTPS to GitHub.
+
+`pull-deploy.sh` (run by `pull-deploy.timer` 30s after boot, then every 2
+minutes) compares the latest release tag against `~/.maverick-deployed-tag`,
+and on a new tag it:
+
+1. downloads the `maverick-telemetry` binary and `client-dist.tar.gz` assets;
+2. refreshes the Python/server/deploy files from `origin/main` via `git`;
+3. installs the Tauri binary and unpacks the React build;
+4. reinstalls the managed `kanshi.config`;
+5. runs `db/migrate.py` against the live database;
+6. `npm install --omit=dev` in `server/`;
+7. `sudo systemctl restart express_bridge kiosk`;
+8. records the new tag.
+
+Install the timer:
+
+```bash
+sudo cp deploy/pull-deploy.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now pull-deploy.timer
+```
+
+### Passwordless restart (required)
+
+Step 7 runs `sudo systemctl restart …` unattended (also when triggered from the
+dashboard's `POST /api/version/update`). Grant the `pi` user passwordless rights
+for just those restarts:
+
+```bash
+# /etc/sudoers.d/maverick  (edit with: sudo visudo -f /etc/sudoers.d/maverick)
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl restart express_bridge, /usr/bin/systemctl restart kiosk
+```
+
+### Optional: GitHub token for higher rate limits
+
+Unauthenticated GitHub API access is capped at 60 requests/hour. To raise it to
+5000/hour, provide a token:
+
+```bash
+echo 'GITHUB_TOKEN=ghp_xxx' > /home/pi/.maverick-env
+```
+
+Then uncomment the `EnvironmentFile=/home/pi/.maverick-env` line in
+`pull-deploy.service` and `daemon-reload`.
+
+> Note: `pull-deploy.service` is a `oneshot` with `TimeoutStartSec=600` so a
+> slow first `npm install` / download can't hang and freeze the timer. If you
+> edit the unit, re-`cp` it and `daemon-reload`.
+
+#### Publishing a release
+
+The OTA flow expects each GitHub Release to carry two assets:
+
+- `maverick-telemetry` — the Tauri release binary (built for the Pi's
+  `aarch64` target).
+- `client-dist.tar.gz` — a gzip tarball of `client/dist`.
+
+The deployed tag is tracked in `~/.maverick-deployed-tag`; delete it to force a
+redeploy of the current release.
 
 ---
 
-## Why I built this
+## Verifying a deployment
 
-My professional background is in offline-first edge and kiosk applications and real-time, WebSocket-driven vehicle diagnostics. I wanted a project that combined that experience with a real hardware boundary on a vehicle I actually drive — using hardware I own, and producing something genuinely useful rather than a contrived demo.
+```bash
+curl -s http://localhost:3000/api/health      # { status: "ok", mqtt: "connected" }
+curl -s http://localhost:3000/api/version     # { current, latest, updateAvailable }
+systemctl --no-pager status db_writer trip_manager obd_poller express_bridge kiosk
+```
 
-The 2026 Maverick Hybrid presented an interesting challenge: standard OBD-II PIDs cover engine vitals, but hybrid-specific data (battery SOC, pack temperature, pack voltage) lives behind Ford proprietary Mode 22 PIDs with no public documentation. Community forums turned up nothing usable, so I surfaced them another way — using the Claude API to systematically probe the vehicle's ECUs, query Mode 22 across candidate modules, and validate responses against expected values until the BECM PIDs reporting real hybrid data were identified and confirmed.
-
----
-
-## Author
-
-Alex Tsuker
-[GitHub](https://github.com/AlexTs-dev) · [LinkedIn](https://www.linkedin.com/in/alex-t-5a5b1b3a7)
+The dashboard should be reachable at `http://<pi-ip>:3000` from any device on
+the same WiFi network, and running fullscreen on the in-cab display.
 
 ---
 
-## License
+## Troubleshooting
 
-MIT
+| Symptom | Check |
+| --- | --- |
+| Poller can't open the port | `pi` in `dialout` group? Adapter at `/dev/ttyUSB0`? (`lsusb`, `dmesg`) |
+| Bridge won't start | Does `client/dist/index.html` exist? Is the DB path consistent? `journalctl -u express_bridge` |
+| Kiosk shows artifacts / black screen | Confirm `WEBKIT_DISABLE_DMABUF_RENDERER=1` is set in `kiosk-start.sh` |
+| Kiosk never opens | Is `/api/health` returning? Is a Wayland session up? `journalctl -u kiosk` |
+| Screen orientation wrong | Edit `deploy/kanshi.config` and redeploy — don't hand-edit on the Pi |
+| OTA not updating | `journalctl -u pull-deploy`; check sudoers entry and (if used) GitHub token/rate limit |
+| Update from dashboard 409s | No newer release published, or an update is already running |
