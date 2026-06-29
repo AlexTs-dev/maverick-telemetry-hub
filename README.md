@@ -11,9 +11,9 @@
 
 ## In the car
 
-![Mounted display showing live telemetry](docs/PXL_20260628_1450322172.jpg)
+![Mounted display showing live telemetry](docs/PXL_20260628_144712443.MP.jpg)
 
-*5" touchscreen mounted in the cab — live speed and RPM traces, coolant temp, throttle, and hybrid battery metrics.*
+*5" touchscreen mounted in the cab — the live view: hybrid battery SOC, pack temp and voltage, coolant, throttle, engine RPM, and rolling speed/RPM traces.*
 
 ---
 
