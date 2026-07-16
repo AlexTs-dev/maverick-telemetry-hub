@@ -17,7 +17,7 @@ require('dotenv').config();
 const express                        = require('express');
 const { createServer }               = require('http');
 const path                           = require('path');
-const { mqttClient, onMessage, getRecentMessages } = require('./mqtt');
+const { mqttClient, onMessage, getRecentMessages, getVisionStatus } = require('./mqtt');
 const { createWebSocketServer }      = require('./websocket');
 const tripsRouter                    = require('./routes/trips');
 const dtcsRouter                     = require('./routes/dtcs');
@@ -39,6 +39,26 @@ app.use('/api/trips',   tripsRouter);
 app.use('/api/dtcs',    dtcsRouter);
 app.use('/api/version', versionRouter);
 
+// ---------------------------------------------------------------------------
+// Snapshot images from the Jetson vision pipeline
+// Files are written by db_writer.py (the single writer); we only serve them.
+// ---------------------------------------------------------------------------
+const SNAPSHOT_DIR = process.env.MAVERICK_SNAPSHOT_DIR
+    || path.resolve(__dirname, '..', 'snapshots');
+
+app.use('/api/snapshots', express.static(SNAPSHOT_DIR, {
+    index:   false,
+    dotfiles: 'deny',
+    maxAge:  '365d',
+    immutable: true,
+}));
+
+// express.static calls next() on a miss — without this, a missing image
+// falls through to the SPA catch-all and returns index.html with a 200.
+app.use('/api/snapshots', (req, res) => {
+    res.status(404).json({ error: 'Snapshot not found' });
+});
+
 // Begin polling GitHub for the latest release in the background
 startPolling();
 
@@ -48,6 +68,7 @@ app.get('/api/health', (req, res) => {
         status:    'ok',
         timestamp: new Date().toISOString(),
         mqtt:      mqttClient.connected ? 'connected' : 'disconnected',
+        vision:    getVisionStatus(),
     });
 });
 

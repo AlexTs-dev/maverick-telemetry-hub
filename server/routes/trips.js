@@ -150,5 +150,47 @@ router.get('/:id/dtcs', (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
+
+// ---------------------------------------------------------------------------
+// GET /api/trips/:id/vision
+// All vision events for a trip, chronological.
+// ---------------------------------------------------------------------------
+router.get('/:id/vision', (req, res) => {
+    try {
+        // Confirm trip exists first
+        const trip = db.prepare('SELECT id FROM trips WHERE id = ?')
+                       .get(req.params.id);
+        if (!trip) {
+            return res.status(404).json({ error: 'Trip not found' });
+        }
+ 
+        const visionFrames = db.prepare(`
+            SELECT
+                id, 
+                ts, 
+                frame_id, 
+                source, 
+                width_px, 
+                height_px, 
+                scene_label, 
+                confidence, 
+                snapshot_path
+            FROM vision_frames
+            WHERE trip_id = ?
+            ORDER BY ts ASC
+        `).all(req.params.id);
+
+        // snapshot_path is a filesystem fact (relative to MAVERICK_SNAPSHOT_DIR);
+        // the URL is a routing fact — derive it here so the DB never hardcodes routes.
+        res.json(visionFrames.map(({ snapshot_path, ...frame }) => ({
+            ...frame,
+            snapshot_url: snapshot_path ? '/api/snapshots/' + snapshot_path : null,
+        })));
+ 
+    } catch (error) {
+        console.error(`GET /trips/${req.params.id}/vision error:`, error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
  
 module.exports = router;

@@ -13,8 +13,9 @@ PRAGMA foreign_keys = ON;
 DELETE FROM trip_summaries;
 DELETE FROM dtcs;
 DELETE FROM readings;
+DELETE FROM vision_frames;
 DELETE FROM trips;
-DELETE FROM sqlite_sequence WHERE name IN ('trips', 'readings', 'dtcs');
+DELETE FROM sqlite_sequence WHERE name IN ('trips', 'readings', 'dtcs', 'vision_frames');
 
 -- ---------------------------------------------------------------------------
 -- Trips
@@ -99,6 +100,25 @@ INSERT INTO dtcs (trip_id, code, first_seen_at, claude_diagnosis, diagnosed_at) 
   (2, 'P0D0B', '2026-05-27T14:24:00+00:00',
    'P0D0B — High Voltage Battery Pack Deterioration (Ford hybrid). Indicates the HV battery capacity has dropped below the expected threshold for the vehicle age and mileage. Common in first-generation FHEV packs exposed to repeated deep discharge cycles. Urgency: LOW — monitor SOC trends; schedule dealer inspection if fuel economy drops noticeably.',
    '2026-05-27T14:35:00+00:00');
+
+-- ---------------------------------------------------------------------------
+-- Vision frames (Jetson snapshots)
+-- snapshot_path values intentionally point at files that don't exist on dev
+-- machines — this exercises the client's broken-image fallback. Trip 1 has
+-- NULL scene labels (pre-inference placeholder UI), trip 2 has labels
+-- (badge UI, incl. one 'event' frame), trip 3 has none (empty state).
+-- Frame timestamps sit between readings so nearest-reading alignment shows
+-- a nonzero delta.
+-- ---------------------------------------------------------------------------
+
+INSERT INTO vision_frames (trip_id, ts, frame_id, source, snapshot_path, width_px, height_px, scene_label, confidence) VALUES
+  (1, '2026-05-28T07:46:30+00:00', 'a1b2c3d4', 'periodic', 'trip_000001/20260528T074630000Z_a1b2c3d4_periodic.jpg', 1280, 720, NULL, NULL),
+  (1, '2026-05-28T07:50:30+00:00', 'b2c3d4e5', 'periodic', 'trip_000001/20260528T075030000Z_b2c3d4e5_periodic.jpg', 1280, 720, NULL, NULL),
+  (1, '2026-05-28T07:55:30+00:00', 'c3d4e5f6', 'periodic', 'trip_000001/20260528T075530000Z_c3d4e5f6_periodic.jpg', 1280, 720, NULL, NULL),
+  (1, '2026-05-28T08:00:30+00:00', 'd4e5f607', 'periodic', 'trip_000001/20260528T080030000Z_d4e5f607_periodic.jpg', 1280, 720, NULL, NULL),
+  (2, '2026-05-27T14:22:30+00:00', 'e5f60718', 'periodic', 'trip_000002/20260527T142230000Z_e5f60718_periodic.jpg', 1280, 720, 'city', 0.91),
+  (2, '2026-05-27T14:26:30+00:00', 'f6071829', 'event',    'trip_000002/20260527T142630000Z_f6071829_event.jpg',    1280, 720, 'residential', 0.77),
+  (2, '2026-05-27T14:30:30+00:00', '0718293a', 'periodic', 'trip_000002/20260527T143030000Z_0718293a_periodic.jpg', 1280, 720, 'city', 0.84);
 
 -- ---------------------------------------------------------------------------
 -- Trip summaries

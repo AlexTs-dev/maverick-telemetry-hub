@@ -10,6 +10,7 @@ Handles:
 - trip_open       → INSERT into trips table
 - trip_close      → UPDATE trips, compute and INSERT trip_summaries
 - dtcs            → INSERT into dtcs table
+- vision frames   → write JPEG to MAVERICK_SNAPSHOT_DIR, INSERT into vision_frames
 
 Write failures retry up to 3 times with brief backoff, then skip
 the record and log the failure. Process stays alive regardless.
@@ -17,6 +18,7 @@ the record and log the failure. Process stays alive regardless.
 Managed by systemd — see deploy/db_writer.service
 """
 
+import base64
 import os
 import paho.mqtt.client as mqtt
 import sqlite3
@@ -35,12 +37,19 @@ from pathlib import Path
 MQTT_HOST       = "localhost"
 MQTT_PORT       = 1883
 MQTT_TOPIC_BASE = "maverick/telemetry"
+MQTT_VISION_TOPIC_BASE = "maverick/vision"
+_default_snapshots = Path(__file__).resolve().parent / "snapshots"
+SNAPSHOT_DIR = Path(os.environ.get("MAVERICK_SNAPSHOT_DIR", _default_snapshots))
 
 _default_db = Path(__file__).resolve().parent / "maverick_telemetry.db"
 DB_PATH     = Path(os.environ.get("MAVERICK_DB_PATH", _default_db))
 
 MAX_RETRIES     = 3
 RETRY_DELAY     = 0.5  # seconds between retries
+
+# ~2.6 GB at ~130 KB/frame — the snapshot store must be self-bounding
+# (no SSH into the truck to clean up a full disk).
+MAX_SNAPSHOTS = int(os.environ.get("MAVERICK_MAX_SNAPSHOTS", "20000"))
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -86,9 +95,9 @@ def with_retry(fn, *args, **kwargs):
 # Active trip tracking
 # ---------------------------------------------------------------------------
 # db_writer needs to know the current trip_id so it can attach readings
-# to the right trip. Stored in memory — if db_writer restarts mid-trip,
-# it will miss the trip_open event and readings will be unattached until
-# the next trip starts. Acceptable tradeoff for this architecture.
+# and vision frames to the right trip. Stored in memory — if db_writer
+# restarts mid-trip, it will miss the trip_open event and both are dropped
+# until the next trip starts. Acceptable tradeoff for this architecture.
 
 _state_lock    = threading.Lock()
 _active_trip_id = None  # int or None
@@ -149,6 +158,77 @@ def handle_reading(conn: sqlite3.Connection, payload: dict) -> None:
         conn.commit()
 
     with_retry(_write)
+
+
+def handle_vision_frame(conn: sqlite3.Connection, payload: dict) -> None:
+    trip_id = get_active_trip_id()
+    if trip_id is None:
+        log.debug("Vision frame received but no active trip — skipping")
+        return
+
+    # ts names the snapshot file and drives alignment with OBD readings —
+    # a frame without a parseable timestamp is useless, skip it.
+    try:
+        ts_dt = datetime.fromisoformat(payload["ts"])
+    except (KeyError, TypeError, ValueError) as e:
+        log.warning(f"Vision frame with missing/bad ts — skipping: {e}")
+        return
+
+    try:
+        jpeg_bytes = base64.b64decode(payload["jpeg_b64"], validate=True)
+    except (KeyError, TypeError, ValueError) as e:
+        log.warning(f"Vision frame with missing/bad jpeg_b64 — skipping: {e}")
+        return
+
+    # frame_id and source go into the filename; the broker accepts anonymous
+    # publishers, so strip anything that could escape SNAPSHOT_DIR.
+    frame_id = "".join(c for c in str(payload.get("frame_id") or "noid") if c.isalnum())[:8] or "noid"
+    source   = payload.get("source") if payload.get("source") in ("periodic", "event") else "periodic"
+
+    ts_compact = ts_dt.strftime("%Y%m%dT%H%M%S%f")[:-3] + "Z"
+    # POSIX separator in the DB value — the Express bridge serves
+    # /api/snapshots/<snapshot_path> relative to SNAPSHOT_DIR verbatim.
+    rel_path = f"trip_{trip_id:06d}/{ts_compact}_{frame_id}_{source}.jpg"
+
+    # File before row: a power cut may orphan a snapshot on disk, but must
+    # never leave a row pointing at a file that doesn't exist.
+    try:
+        abs_path = SNAPSHOT_DIR / rel_path
+        abs_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = abs_path.with_suffix(".tmp")
+        tmp_path.write_bytes(jpeg_bytes)
+        os.replace(tmp_path, abs_path)
+    except OSError as e:
+        log.warning(f"Snapshot write failed for {rel_path} — skipping frame: {e}")
+        return
+
+    def _write():
+        conn.execute(
+            """
+            INSERT INTO vision_frames (
+                trip_id, ts, frame_id, source, snapshot_path,
+                width_px, height_px, scene_label, confidence
+            ) VALUES (
+                :trip_id, :ts, :frame_id, :source, :snapshot_path,
+                :width_px, :height_px, :scene_label, :confidence
+            )
+            """,
+            {
+                "trip_id":       trip_id,
+                "ts":            payload.get("ts"),
+                "frame_id":      payload.get("frame_id"),
+                "source":        source,
+                "snapshot_path": rel_path,
+                "width_px":      payload.get("width_px"),
+                "height_px":     payload.get("height_px"),
+                "scene_label":   payload.get("scene_label"),
+                "confidence":    payload.get("confidence"),
+            },
+        )
+        conn.commit()
+
+    with_retry(_write)
+    log.debug(f"Vision frame recorded: {rel_path} for trip {trip_id}")
 
 
 def handle_trip_open(conn: sqlite3.Connection, payload: dict) -> None:
@@ -217,6 +297,9 @@ def handle_trip_close(conn: sqlite3.Connection, payload: dict) -> None:
 
     log.info(f"Trip closed — id={trip_id} reason={reason}")
     set_active_trip_id(None)
+
+    # Trip close is the quiet moment to enforce the snapshot cap
+    prune_snapshots(conn)
 
 
 def compute_trip_summary(conn: sqlite3.Connection, trip_id: int) -> None:
@@ -322,6 +405,7 @@ def build_mqtt_client(conn: sqlite3.Connection) -> mqtt.Client:
             client.subscribe(f"{MQTT_TOPIC_BASE}/trip_open",  qos=1)
             client.subscribe(f"{MQTT_TOPIC_BASE}/trip_close", qos=1)
             client.subscribe(f"{MQTT_TOPIC_BASE}/dtc",        qos=1)
+            client.subscribe(f"{MQTT_VISION_TOPIC_BASE}/frame", qos=1)
         else:
             log.error(f"MQTT connection failed — rc={rc}")
 
@@ -341,6 +425,8 @@ def build_mqtt_client(conn: sqlite3.Connection) -> mqtt.Client:
             handle_trip_close(conn, payload)
         elif topic.endswith("/dtc"):
             handle_dtc(conn, payload)
+        elif topic.endswith("/vision/frame"):
+            handle_vision_frame(conn, payload)
 
     def on_disconnect(client, userdata, rc):
         if rc != 0:
@@ -350,6 +436,57 @@ def build_mqtt_client(conn: sqlite3.Connection) -> mqtt.Client:
     client.on_message    = on_message
     client.on_disconnect = on_disconnect
     return client
+
+def prune_snapshots(conn: sqlite3.Connection) -> None:
+    """
+    Keep vision_frames (and their JPEG files) bounded at MAX_SNAPSHOTS rows.
+    Called at boot and after each trip_close — never per frame. Oldest rows
+    go first (id order = insertion order under AUTOINCREMENT).
+
+    Files are unlinked before their rows are deleted — the mirror image of
+    handle_vision_frame's file-before-row insert. A crash mid-prune leaves
+    some rows pointing at missing files, but the next run re-selects those
+    same oldest rows and finishes the job (unlink tolerates already-missing
+    files), so nothing leaks and nothing needs manual repair.
+    """
+    def _prune():
+        row = conn.execute("SELECT COUNT(*) AS cnt FROM vision_frames").fetchone()
+        excess = (row["cnt"] if row else 0) - MAX_SNAPSHOTS
+        if excess <= 0:
+            return
+
+        doomed = conn.execute(
+            "SELECT id, snapshot_path FROM vision_frames ORDER BY id ASC LIMIT ?",
+            (excess,),
+        ).fetchall()
+
+        trip_dirs = set()
+        for r in doomed:
+            if r["snapshot_path"]:
+                path = SNAPSHOT_DIR / r["snapshot_path"]
+                try:
+                    path.unlink(missing_ok=True)
+                    trip_dirs.add(path.parent)
+                except OSError as e:
+                    # Undeletable file — leak it rather than let the DB grow.
+                    log.warning(f"Could not delete snapshot {path}: {e}")
+
+        # doomed is the oldest `excess` rows, so its last id is an upper
+        # bound covering exactly that set — one statement, no giant IN list.
+        conn.execute("DELETE FROM vision_frames WHERE id <= ?", (doomed[-1]["id"],))
+        conn.commit()
+
+        # Best-effort removal of now-empty per-trip directories
+        for d in trip_dirs:
+            try:
+                d.rmdir()
+            except OSError:
+                pass  # not empty — still holds newer frames
+
+        log.info(f"Pruned {len(doomed)} old snapshots (cap {MAX_SNAPSHOTS})")
+
+    with_retry(_prune)
+
 
 # ---------------------------------------------------------------------------
 # Main
@@ -407,11 +544,12 @@ def run() -> None:
             "Run db/migrate.py first."
         )
         sys.exit(1)
-
+    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
     conn = get_connection()
     log.info(f"SQLite connected — {DB_PATH}")
 
     recover_unclosed_trips(conn)
+    prune_snapshots(conn)
 
     mqtt_client = build_mqtt_client(conn)
 

@@ -33,6 +33,18 @@ htmlcov/
 *.sqlite3
 db/*.db
 
+# Vision snapshots (JPEGs written by db_writer; dev default is <repo>/snapshots)
+snapshots/
+
+# Model weights/engines — never in git (see jetson/models/README.md)
+*.pt
+*.engine
+*.onnx
+
+# Training datasets never belong in the repo (see jetson/training/README.md);
+# ultralytics is configured to use C:\datasets, but guard the repo root too.
+/datasets/
+
 # Environment variables / secrets
 .env
 .env.*

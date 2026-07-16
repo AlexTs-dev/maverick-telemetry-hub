@@ -1,0 +1,9 @@
+# Dev-machine dependencies for jetson/vision_publisher.py.
+#
+# On the Jetson itself, do NOT install this file. Create the venv with
+#   python3 -m venv --system-site-packages venv
+# and install only paho-mqtt, so JetPack's CUDA-accelerated OpenCV and
+# numpy are used instead of these CPU-only wheels. See jetson/README.md.
+paho-mqtt
+opencv-python
+numpy

@@ -123,6 +123,32 @@ ALTER TABLE readings ADD COLUMN motor_speed_rpm   INTEGER;
 -- already have columns (battery_soc_pct v1, pack_voltage_v v2), now polled too.
 ALTER TABLE readings ADD COLUMN hvb_temp_f REAL;
 """,
+
+    4: """
+-- AI-vision boilerplate: snapshots from the Jetson Orin Nano (direct ethernet).
+-- One row per frame received on maverick/vision/frame. Whole-frame scene
+-- classification (no bounding boxes) — scene_label/confidence stay NULL until
+-- real inference ships. confidence is a 0-1 fraction (ML convention, not _pct).
+-- snapshot_path is relative to MAVERICK_SNAPSHOT_DIR. db_writer owns the files
+-- as well as the rows (single-writer invariant covers the snapshot dir too).
+-- NOTE: _apply_migration splits migrations on semicolons — never put one
+-- inside a comment, only at true statement boundaries.
+CREATE TABLE IF NOT EXISTS vision_frames (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    trip_id       INTEGER NOT NULL REFERENCES trips(id),
+    ts            TEXT NOT NULL,
+    frame_id      TEXT,
+    source        TEXT NOT NULL DEFAULT 'periodic',
+    snapshot_path TEXT,
+    width_px      INTEGER,
+    height_px     INTEGER,
+    scene_label   TEXT,
+    confidence    REAL
+);
+
+CREATE INDEX IF NOT EXISTS idx_vision_frames_trip ON vision_frames(trip_id, ts);
+    """
+    
 }
 
 CURRENT_VERSION = max(MIGRATIONS)

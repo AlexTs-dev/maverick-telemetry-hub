@@ -1,0 +1,38 @@
+# jetson/deploy/vision_publisher.service
+# Install ON THE JETSON (not the Pi):
+#   sudo cp jetson/deploy/vision_publisher.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now vision_publisher
+
+[Unit]
+Description=Maverick Vision — Jetson snapshot publisher
+Documentation=https://github.com/AlexTs-dev/maverick-telemetry-hub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jetson
+WorkingDirectory=/home/jetson/maverick-telemetry-hub/jetson
+ExecStart=/home/jetson/maverick-telemetry-hub/jetson/venv/bin/python vision_publisher.py
+
+# Restart policy — always restart on failure, with 5s delay
+Restart=always
+RestartSec=5
+
+# Give it 10s to shut down cleanly before killing it
+TimeoutStopSec=10
+
+# Log to journald — view with: journalctl -u vision_publisher -f
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vision_publisher
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+Environment=MQTT_HOST=192.168.100.1
+# Environment=VISION_SOURCE=test
+# Environment=VISION_SNAPSHOT_INTERVAL=10
+
+[Install]
+WantedBy=multi-user.target
