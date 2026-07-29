@@ -17,11 +17,12 @@ require('dotenv').config();
 const express                        = require('express');
 const { createServer }               = require('http');
 const path                           = require('path');
-const { mqttClient, onMessage, getRecentMessages, getVisionStatus } = require('./mqtt');
+const { mqttClient, onMessage, getRecentMessages, getVisionStatus, getDashcamStatus } = require('./mqtt');
 const { createWebSocketServer }      = require('./websocket');
 const tripsRouter                    = require('./routes/trips');
 const dtcsRouter                     = require('./routes/dtcs');
 const versionRouter                  = require('./routes/version');
+const { router: videosRouter, dashcamStatus } = require('./routes/videos');
 const { startPolling }               = require('./version');
 
 const PORT = process.env.PORT || 3000;
@@ -38,6 +39,12 @@ app.use(express.json());
 app.use('/api/trips',   tripsRouter);
 app.use('/api/dtcs',    dtcsRouter);
 app.use('/api/version', versionRouter);
+app.use('/api/videos',  videosRouter);
+
+// Dashcam storage/retention summary — SQLite counters plus the Jetson's last
+// reported disk figures. The Pi cannot see the Jetson's filesystem, so those
+// numbers can only come from its heartbeat.
+app.get('/api/dashcam/status', dashcamStatus(getDashcamStatus));
 
 // ---------------------------------------------------------------------------
 // Snapshot images from the Jetson vision pipeline
@@ -64,11 +71,17 @@ startPolling();
 
 // Health check — used by systemd watchdog and for debugging
 app.get('/api/health', (req, res) => {
+    const dashcam = getDashcamStatus();
     res.json({
         status:    'ok',
         timestamp: new Date().toISOString(),
         mqtt:      mqttClient.connected ? 'connected' : 'disconnected',
         vision:    getVisionStatus(),
+        dashcam:   dashcam
+            ? { status: dashcam.stale ? 'disconnected' : dashcam.status,
+                recording: !!dashcam.recording,
+                storage_pressure: !!dashcam.storage_pressure }
+            : 'unknown',
     });
 });
 

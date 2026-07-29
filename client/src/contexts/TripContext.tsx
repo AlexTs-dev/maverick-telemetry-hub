@@ -6,7 +6,8 @@
 //
 // Usage:
 //   const { trips, loading, error } = useTrips()
-//   const { trip, readings, dtcs, loading } = useTrip(id)
+//   const { trip, readings, dtcs, videos, crashEvents, loading } = useTrip(id)
+//   const { deleteClip, deleteTripVideos, setFootageProtected } = useDashcam()
 
 import {
   createContext,
@@ -33,14 +34,17 @@ export interface TripSummary {
 }
 
 export interface Trip extends TripSummary {
-  id:               number
-  started_at:       string
-  ended_at:         string | null
-  duration_seconds: number | null
-  odometer_start:   number | null
-  odometer_end:     number | null
-  dtc_count:        number
-  notes:            string | null
+  id:                number
+  started_at:        string
+  ended_at:          string | null
+  duration_seconds:  number | null
+  odometer_start:    number | null
+  odometer_end:      number | null
+  dtc_count:         number
+  crash_count:       number
+  footage_protected: number   // 0 | 1 — dashcam footage exempt from the purge
+  clip_count:        number   // dashcam clips still on the Jetson
+  notes:             string | null
 }
 
 export interface Reading {
@@ -67,6 +71,39 @@ export interface DTC {
   trip_started_at?: string
 }
 
+// A dashcam segment. The file lives on the Jetson — video_url points at the
+// Express proxy, which range-forwards to it, so the browser only ever talks to
+// the Pi. `protected` clips are exempt from the rolling retention purge.
+export interface DashcamClip {
+  id:         number
+  clip_id:    string
+  trip_id?:   number | null
+  started_at: string
+  ended_at:   string
+  duration_s: number | null
+  size_bytes: number | null
+  width_px:   number | null
+  height_px:  number | null
+  fps:        number | null
+  protected:  number          // 0 | 1 — SQLite has no boolean
+  state:      'available' | 'pending_delete' | 'deleted' | 'missing'
+  video_url:  string
+}
+
+// A hard deceleration detected from the OBD speed stream.
+//   hard_brake      — logged only, protects nothing
+//   potential_crash — also protects this trip's footage from the purge
+export interface CrashEvent {
+  id:               number
+  ts:               string
+  severity:         'hard_brake' | 'potential_crash'
+  source:           string
+  peak_decel_g:     number | null
+  speed_before_mph: number | null
+  speed_after_mph:  number | null
+  detail:           string | null
+}
+
 // ---------------------------------------------------------------------------
 // Context shape
 // ---------------------------------------------------------------------------
@@ -79,17 +116,16 @@ interface TripContextValue {
   refreshTrips: () => void
 
   // Per-trip detail — keyed by trip id string
-  getTripDetail: (id: string) => {
-    trip:     Trip | null
-    readings: Reading[]
-    dtcs:     DTC[]
-    loading:  boolean
-    error:    string | null
-  }
+  getTripDetail: (id: string) => TripDetailState
   fetchTripDetail: (id: string) => void
 
   // DTC diagnosis
   diagnose: (dtcId: number) => Promise<DTC>
+
+  // Dashcam
+  deleteClip:      (tripId: string, clipId: string, force?: boolean) => Promise<void>
+  deleteTripVideos: (tripId: string, force?: boolean) => Promise<void>
+  setFootageProtected: (tripId: string, isProtected: boolean) => Promise<void>
 }
 
 // ---------------------------------------------------------------------------
@@ -97,11 +133,18 @@ interface TripContextValue {
 // ---------------------------------------------------------------------------
 
 interface TripDetailState {
-  trip:     Trip | null
-  readings: Reading[]
-  dtcs:     DTC[]
-  loading:  boolean
-  error:    string | null
+  trip:        Trip | null
+  readings:    Reading[]
+  dtcs:        DTC[]
+  videos:      DashcamClip[]
+  crashEvents: CrashEvent[]
+  loading:     boolean
+  error:       string | null
+}
+
+const EMPTY_DETAIL: TripDetailState = {
+  trip: null, readings: [], dtcs: [], videos: [], crashEvents: [],
+  loading: false, error: null,
 }
 
 // ---------------------------------------------------------------------------
@@ -166,26 +209,27 @@ export function TripProvider({ children }: { children: ReactNode }) {
 
     setDetailCache(prev => ({
       ...prev,
-      [id]: { trip: null, readings: [], dtcs: [], loading: true, error: null },
+      [id]: { ...EMPTY_DETAIL, loading: true },
     }))
 
     try {
-      const [trip, readings, dtcs] = await Promise.all([
+      const [trip, readings, dtcs, videos, crashEvents] = await Promise.all([
         apiFetch<Trip>(`/trips/${id}`),
         apiFetch<Reading[]>(`/trips/${id}/readings`),
         apiFetch<DTC[]>(`/trips/${id}/dtcs`),
+        apiFetch<DashcamClip[]>(`/trips/${id}/videos`),
+        apiFetch<CrashEvent[]>(`/trips/${id}/crash-events`),
       ])
 
       setDetailCache(prev => ({
         ...prev,
-        [id]: { trip, readings, dtcs, loading: false, error: null },
+        [id]: { trip, readings, dtcs, videos, crashEvents, loading: false, error: null },
       }))
     } catch (err) {
       setDetailCache(prev => ({
         ...prev,
         [id]: {
-          trip: null, readings: [], dtcs: [],
-          loading: false,
+          ...EMPTY_DETAIL,
           error: err instanceof Error ? err.message : 'Failed to load trip',
         },
       }))
@@ -193,9 +237,7 @@ export function TripProvider({ children }: { children: ReactNode }) {
   }, [detailCache])
 
   const getTripDetail = useCallback((id: string): TripDetailState => {
-    return detailCache[id] ?? {
-      trip: null, readings: [], dtcs: [], loading: false, error: null,
-    }
+    return detailCache[id] ?? EMPTY_DETAIL
   }, [detailCache])
 
   // -------------------------------------------------------------------------
@@ -233,6 +275,54 @@ export function TripProvider({ children }: { children: ReactNode }) {
   }, [])
 
   // -------------------------------------------------------------------------
+  // Dashcam
+  //
+  // Deletes are asynchronous end to end: the bridge answers 202 and publishes
+  // an MQTT command, db_writer marks the row pending_delete, and the Jetson
+  // removes the file before the row finally disappears. The detail cache never
+  // refetches and has no invalidation API, so these patch it in place — the
+  // same approach diagnose() takes above.
+  // -------------------------------------------------------------------------
+
+  const patchDetail = useCallback((
+    tripId: string,
+    fn: (detail: TripDetailState) => TripDetailState,
+  ) => {
+    setDetailCache(prev => (prev[tripId] ? { ...prev, [tripId]: fn(prev[tripId]) } : prev))
+  }, [])
+
+  const mutate = useCallback(async (path: string, init: RequestInit) => {
+    const res = await fetch(`${API}${path}`, init)
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.error ?? `HTTP ${res.status}`)
+    }
+    return res.json()
+  }, [])
+
+  const deleteClip = useCallback(async (tripId: string, clipId: string, force = false) => {
+    await mutate(`/videos/${clipId}${force ? '?force=1' : ''}`, { method: 'DELETE' })
+    patchDetail(tripId, d => ({ ...d, videos: d.videos.filter(v => v.clip_id !== clipId) }))
+  }, [mutate, patchDetail])
+
+  const deleteTripVideos = useCallback(async (tripId: string, force = false) => {
+    await mutate(`/trips/${tripId}/videos${force ? '?force=1' : ''}`, { method: 'DELETE' })
+    patchDetail(tripId, d => ({ ...d, videos: [] }))
+  }, [mutate, patchDetail])
+
+  const setFootageProtected = useCallback(async (tripId: string, isProtected: boolean) => {
+    await mutate(`/trips/${tripId}/videos/protect`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ protected: isProtected }),
+    })
+    patchDetail(tripId, d => ({
+      ...d,
+      videos: d.videos.map(v => ({ ...v, protected: isProtected ? 1 : 0 })),
+    }))
+  }, [mutate, patchDetail])
+
+  // -------------------------------------------------------------------------
   // Value
   // -------------------------------------------------------------------------
 
@@ -245,6 +335,9 @@ export function TripProvider({ children }: { children: ReactNode }) {
       getTripDetail,
       fetchTripDetail,
       diagnose,
+      deleteClip,
+      deleteTripVideos,
+      setFootageProtected,
     }}>
       {children}
     </TripContext.Provider>
@@ -281,4 +374,14 @@ export function useDiagnose() {
   const ctx = useContext(TripContext)
   if (!ctx) throw new Error('useDiagnose must be used within TripProvider')
   return ctx.diagnose
+}
+
+export function useDashcam() {
+  const ctx = useContext(TripContext)
+  if (!ctx) throw new Error('useDashcam must be used within TripProvider')
+  return {
+    deleteClip:          ctx.deleteClip,
+    deleteTripVideos:    ctx.deleteTripVideos,
+    setFootageProtected: ctx.setFootageProtected,
+  }
 }

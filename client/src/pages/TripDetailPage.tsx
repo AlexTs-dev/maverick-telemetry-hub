@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useTrip, useDiagnose } from '@/contexts/TripContext'
-import type { Reading, DTC } from '@/contexts/TripContext'
+import type { Reading, DTC, CrashEvent } from '@/contexts/TripContext'
 import { Badge }      from '@/components/ui/badge'
 import { Button }     from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton }   from '@/components/ui/skeleton'
+import { DashcamSection } from '@/components/DashcamSection'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -121,6 +122,33 @@ function DtcCard({ dtc, onDiagnose, busy }: { dtc: DTC; onDiagnose: () => void; 
   )
 }
 
+function CrashEventCard({ event }: { event: CrashEvent }) {
+  const isCrash = event.severity === 'potential_crash'
+  return (
+    <div className={`rounded-lg border bg-card p-3 space-y-1 ${isCrash ? 'border-destructive/50' : ''}`}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Badge variant={isCrash ? 'destructive' : 'secondary'}>
+            {isCrash ? 'Possible collision' : 'Hard braking'}
+          </Badge>
+          <span className="text-xs text-muted-foreground tabular-nums">{formatTime(event.ts)}</span>
+        </div>
+        <span className="text-xs font-semibold tabular-nums shrink-0">
+          {event.peak_decel_g != null ? `${event.peak_decel_g.toFixed(2)}g` : '—'}
+        </span>
+      </div>
+      <p className="text-[10px] text-muted-foreground tabular-nums">
+        {fmt(event.speed_before_mph, 0)} → {fmt(event.speed_after_mph, 0)} mph
+      </p>
+      {isCrash && (
+        <p className="text-[10px] text-muted-foreground leading-relaxed">
+          This trip's dashcam footage is kept indefinitely.
+        </p>
+      )}
+    </div>
+  )
+}
+
 function LoadingSkeleton() {
   return (
     <>
@@ -163,8 +191,8 @@ function pluck(readings: Reading[], key: keyof Reading): number[] {
 // ---------------------------------------------------------------------------
 
 export function TripDetailPage() {
-  const { id }                           = useParams<{ id: string }>()
-  const { trip, readings, dtcs, loading, error } = useTrip(id!)
+  const { id } = useParams<{ id: string }>()
+  const { trip, readings, dtcs, videos, crashEvents, loading, error } = useTrip(id!)
   const diagnose                         = useDiagnose()
   const navigate                         = useNavigate()
 
@@ -209,6 +237,9 @@ export function TripDetailPage() {
             <Skeleton className="h-4 w-40" />
             <Skeleton className="h-3 w-24" />
           </div>
+        )}
+        {crashEvents.some(e => e.severity === 'potential_crash') && (
+          <Badge variant="destructive" className="shrink-0">Impact</Badge>
         )}
         {dtcs.length > 0 && (
           <Badge variant="destructive" className="shrink-0">{dtcs.length} DTC</Badge>
@@ -274,6 +305,21 @@ export function TripDetailPage() {
                   </ChartCard>
                 </div>
               )}
+
+              {/* Crash / hard-braking events — above the footage they explain */}
+              {crashEvents.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-0.5">
+                    Events
+                  </p>
+                  {crashEvents.map(event => (
+                    <CrashEventCard key={event.id} event={event} />
+                  ))}
+                </div>
+              )}
+
+              {/* Dashcam footage (renders nothing when there are no clips) */}
+              <DashcamSection tripId={id!} clips={videos} />
 
               {/* DTCs */}
               {dtcs.length > 0 && (

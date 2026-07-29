@@ -14,8 +14,11 @@ DELETE FROM trip_summaries;
 DELETE FROM dtcs;
 DELETE FROM readings;
 DELETE FROM vision_frames;
+DELETE FROM dashcam_clips;
+DELETE FROM crash_events;
 DELETE FROM trips;
-DELETE FROM sqlite_sequence WHERE name IN ('trips', 'readings', 'dtcs', 'vision_frames');
+DELETE FROM sqlite_sequence WHERE name IN
+  ('trips', 'readings', 'dtcs', 'vision_frames', 'dashcam_clips', 'crash_events');
 
 -- ---------------------------------------------------------------------------
 -- Trips
@@ -119,6 +122,38 @@ INSERT INTO vision_frames (trip_id, ts, frame_id, source, snapshot_path, width_p
   (2, '2026-05-27T14:22:30+00:00', 'e5f60718', 'periodic', 'trip_000002/20260527T142230000Z_e5f60718_periodic.jpg', 1280, 720, 'city', 0.91),
   (2, '2026-05-27T14:26:30+00:00', 'f6071829', 'event',    'trip_000002/20260527T142630000Z_f6071829_event.jpg',    1280, 720, 'residential', 0.77),
   (2, '2026-05-27T14:30:30+00:00', '0718293a', 'periodic', 'trip_000002/20260527T143030000Z_0718293a_periodic.jpg', 1280, 720, 'city', 0.84);
+
+-- ---------------------------------------------------------------------------
+-- Dashcam clips (recorded on the Jetson, streamed via the Pi)
+-- clip_path is relative to the JETSON's clip root, not any path on the Pi —
+-- these files don't exist on a dev machine, which exercises the client's
+-- "dashcam unreachable" state. Trip 1 has plain footage, trip 3 has footage
+-- protected by a potential crash, trip 2 has none (empty state). The last row
+-- has a NULL trip_id — recording runs whenever the Jetson is powered, so
+-- unassigned footage is a normal case the UI has to handle.
+-- ---------------------------------------------------------------------------
+
+INSERT INTO dashcam_clips (clip_id, trip_id, started_at, ended_at, duration_s, size_bytes, width_px, height_px, fps, clip_path, protected, state, created_at) VALUES
+  ('20260528T074500Z_11aa22bb', 1, '2026-05-28T07:45:00+00:00', '2026-05-28T07:46:00+00:00', 60.0, 62914560, 1920, 1080, 30.0, '2026/05/28/20260528T074500Z_11aa22bb.mp4', 0, 'available', '2026-05-28T07:46:03+00:00'),
+  ('20260528T074600Z_22bb33cc', 1, '2026-05-28T07:46:00+00:00', '2026-05-28T07:47:00+00:00', 60.0, 63438848, 1920, 1080, 30.0, '2026/05/28/20260528T074600Z_22bb33cc.mp4', 0, 'available', '2026-05-28T07:47:03+00:00'),
+  ('20260528T074700Z_33cc44dd', 1, '2026-05-28T07:47:00+00:00', '2026-05-28T07:48:00+00:00', 60.0, 61865984, 1920, 1080, 30.0, '2026/05/28/20260528T074700Z_33cc44dd.mp4', 0, 'available', '2026-05-28T07:48:03+00:00'),
+  ('20260526T171500Z_44dd55ee', 3, '2026-05-26T17:15:00+00:00', '2026-05-26T17:16:00+00:00', 60.0, 64487424, 1920, 1080, 30.0, '2026/05/26/20260526T171500Z_44dd55ee.mp4', 1, 'available', '2026-05-26T17:16:03+00:00'),
+  ('20260526T171600Z_55ee66ff', 3, '2026-05-26T17:16:00+00:00', '2026-05-26T17:16:42+00:00', 42.0, 44040192, 1920, 1080, 30.0, '2026/05/26/20260526T171600Z_55ee66ff.mp4', 1, 'available', '2026-05-26T17:16:45+00:00'),
+  ('20260526T171642Z_66ff7700', 3, '2026-05-26T17:16:42+00:00', '2026-05-26T17:17:42+00:00', 60.0, 62914560, 1920, 1080, 30.0, '2026/05/26/20260526T171642Z_66ff7700.mp4', 1, 'available', '2026-05-26T17:17:45+00:00'),
+  ('20260529T120000Z_77008811', NULL, '2026-05-29T12:00:00+00:00', '2026-05-29T12:01:00+00:00', 60.0, 60817408, 1920, 1080, 30.0, '2026/05/29/20260529T120000Z_77008811.mp4', 0, 'available', '2026-05-29T12:01:03+00:00');
+
+-- ---------------------------------------------------------------------------
+-- Crash events
+-- Trip 3 has a potential crash (hence its protected footage, and the segment
+-- split at 17:16:42 above). Trip 1 has an ordinary hard brake, which is logged
+-- but deliberately does NOT protect footage.
+-- ---------------------------------------------------------------------------
+
+INSERT INTO crash_events (trip_id, ts, severity, source, peak_decel_g, speed_before_mph, speed_after_mph, detail) VALUES
+  (3, '2026-05-26T17:16:42+00:00', 'potential_crash', 'obd_speed', 1.34, 52.0, 0.0, '52.0 -> 0.0 mph in 1.0s'),
+  (1, '2026-05-28T07:52:10+00:00', 'hard_brake',      'obd_speed', 0.62, 38.0, 11.0, '38.0 -> 11.0 mph in 1.0s');
+
+UPDATE trips SET crash_count = 1, footage_protected = 1 WHERE id = 3;
 
 -- ---------------------------------------------------------------------------
 -- Trip summaries

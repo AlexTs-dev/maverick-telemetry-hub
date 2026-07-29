@@ -31,6 +31,13 @@ SyslogIdentifier=express_bridge
 
 Environment=NODE_ENV=production
 Environment=MAVERICK_DB_PATH=/home/pi/maverick_telemetry.db
+
+# Where the Jetson serves dashcam footage. The bridge proxies range requests
+# there so the browser streams video from the Pi's own origin — the files
+# themselves never leave the Jetson. Match the Jetson's direct-ethernet address
+# (jetson/deploy/clip_server.service listens on :8088).
+Environment=MAVERICK_JETSON_CLIP_URL=http://192.168.100.2:8088
+
 # Create /home/pi/maverick-telemetry-hub/server/.env with:
 # ANTHROPIC_API_KEY=your_key_here
 # PORT=3000

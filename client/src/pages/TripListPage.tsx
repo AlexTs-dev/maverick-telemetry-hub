@@ -57,6 +57,25 @@ function ChevronRight() {
   )
 }
 
+// Marks a trip that still has dashcam footage. Filled when the footage is
+// protected from the retention purge, outlined when it will age out normally.
+function CameraGlyph({ saved }: { saved: boolean }) {
+  return (
+    <svg
+      className={`w-3.5 h-3.5 shrink-0 ${saved ? 'text-foreground' : 'text-muted-foreground'}`}
+      fill={saved ? 'currentColor' : 'none'}
+      stroke="currentColor"
+      strokeWidth={1.8}
+      viewBox="0 0 24 24"
+      aria-label={saved ? 'Footage kept' : 'Footage available'}
+    >
+      <path strokeLinecap="round" strokeLinejoin="round"
+            d="M4 7h3l1.5-2h7L17 7h3v12H4z" />
+      <circle cx="12" cy="13" r="3.2" fill="none" />
+    </svg>
+  )
+}
+
 function TripRow({ trip, onTap }: { trip: Trip; onTap: () => void }) {
   const meta = [
     trip.notes,
@@ -76,6 +95,9 @@ function TripRow({ trip, onTap }: { trip: Trip; onTap: () => void }) {
         <div className="flex items-baseline gap-2">
           <span className="text-base font-semibold">{formatDate(trip.started_at)}</span>
           <span className="text-sm text-muted-foreground">{formatTime(trip.started_at)}</span>
+          {trip.clip_count > 0 && (
+            <CameraGlyph saved={trip.footage_protected === 1} />
+          )}
         </div>
         {meta && (
           <p className="text-sm text-muted-foreground truncate mt-0.5">{meta}</p>
@@ -88,8 +110,11 @@ function TripRow({ trip, onTap }: { trip: Trip; onTap: () => void }) {
         <Stat label="mph" value={fmt(trip.avg_speed_mph, 0)} />
       </div>
 
-      {/* DTC badge */}
-      <div className="w-16 flex justify-center shrink-0">
+      {/* Event badges — both are rare, so they almost never stack */}
+      <div className="w-16 flex flex-col items-center justify-center gap-0.5 shrink-0">
+        {trip.crash_count > 0 && (
+          <Badge variant="destructive" className="text-[10px] px-1.5 py-0">Impact</Badge>
+        )}
         {trip.dtc_count > 0 && (
           <Badge variant="destructive" className="text-xs px-2">
             {trip.dtc_count} DTC

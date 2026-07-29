@@ -95,6 +95,7 @@ const TRIPS = [
     {
         id: 1, started_at: '2026-05-28T07:45:00+00:00', ended_at: '2026-05-28T08:03:00+00:00',
         duration_seconds: 1080, odometer_start: 4821.3, odometer_end: 4829.6, dtc_count: 0,
+        crash_count: 0, footage_protected: 0, clip_count: 3,
         notes: 'Morning commute',
         avg_speed_mph: 24.3, max_speed_mph: 54.5, avg_rpm: 882.1, max_coolant_temp_f: 203.0,
         ev_time_pct: 26.3, total_regen_kwh: 0.0083, avg_fuel_economy_mpg: 38.4, min_battery_soc_pct: 70.9,
@@ -102,6 +103,7 @@ const TRIPS = [
     {
         id: 2, started_at: '2026-05-27T14:20:00+00:00', ended_at: '2026-05-27T14:32:00+00:00',
         duration_seconds: 720, odometer_start: 4809.1, odometer_end: 4814.8, dtc_count: 1,
+        crash_count: 0, footage_protected: 0, clip_count: 0,
         notes: 'Grocery run',
         avg_speed_mph: 14.5, max_speed_mph: 28.5, avg_rpm: 257.7, max_coolant_temp_f: 191.0,
         ev_time_pct: 69.2, total_regen_kwh: 0.0024, avg_fuel_economy_mpg: 52.1, min_battery_soc_pct: 78.5,
@@ -109,6 +111,7 @@ const TRIPS = [
     {
         id: 3, started_at: '2026-05-26T17:00:00+00:00', ended_at: '2026-05-26T17:35:00+00:00',
         duration_seconds: 2100, odometer_start: 4774.2, odometer_end: 4809.1, dtc_count: 0,
+        crash_count: 1, footage_protected: 1, clip_count: 3,
         notes: 'Highway to trailhead',
         avg_speed_mph: 52.8, max_speed_mph: 72.0, avg_rpm: 1939.3, max_coolant_temp_f: 205.0,
         ev_time_pct: 7.1, total_regen_kwh: 0.0073, avg_fuel_economy_mpg: 34.2, min_battery_soc_pct: 61.5,
@@ -124,6 +127,27 @@ const DTCS = [
         trip_started_at: '2026-05-27T14:20:00+00:00',
     },
 ]
+
+// Dashcam clips — mirrors db/seed.sql. Trip 1 has plain footage, trip 3 has
+// footage protected by a crash, trip 2 has none (empty state), and one clip is
+// unassigned (recorded outside any trip, which is a normal case). The streams
+// 404 in dev, which is deliberate — it exercises the player's error state.
+let CLIPS = [
+    { id: 1, clip_id: '20260528T074500Z_11aa22bb', trip_id: 1, started_at: '2026-05-28T07:45:00+00:00', ended_at: '2026-05-28T07:46:00+00:00', duration_s: 60, size_bytes: 62914560, width_px: 1920, height_px: 1080, fps: 30, protected: 0, state: 'available' },
+    { id: 2, clip_id: '20260528T074600Z_22bb33cc', trip_id: 1, started_at: '2026-05-28T07:46:00+00:00', ended_at: '2026-05-28T07:47:00+00:00', duration_s: 60, size_bytes: 63438848, width_px: 1920, height_px: 1080, fps: 30, protected: 0, state: 'available' },
+    { id: 3, clip_id: '20260528T074700Z_33cc44dd', trip_id: 1, started_at: '2026-05-28T07:47:00+00:00', ended_at: '2026-05-28T07:48:00+00:00', duration_s: 60, size_bytes: 61865984, width_px: 1920, height_px: 1080, fps: 30, protected: 0, state: 'available' },
+    { id: 4, clip_id: '20260526T171500Z_44dd55ee', trip_id: 3, started_at: '2026-05-26T17:15:00+00:00', ended_at: '2026-05-26T17:16:00+00:00', duration_s: 60, size_bytes: 64487424, width_px: 1920, height_px: 1080, fps: 30, protected: 1, state: 'available' },
+    { id: 5, clip_id: '20260526T171600Z_55ee66ff', trip_id: 3, started_at: '2026-05-26T17:16:00+00:00', ended_at: '2026-05-26T17:16:42+00:00', duration_s: 42, size_bytes: 44040192, width_px: 1920, height_px: 1080, fps: 30, protected: 1, state: 'available' },
+    { id: 6, clip_id: '20260526T171642Z_66ff7700', trip_id: 3, started_at: '2026-05-26T17:16:42+00:00', ended_at: '2026-05-26T17:17:42+00:00', duration_s: 60, size_bytes: 62914560, width_px: 1920, height_px: 1080, fps: 30, protected: 1, state: 'available' },
+    { id: 7, clip_id: '20260529T120000Z_77008811', trip_id: null, started_at: '2026-05-29T12:00:00+00:00', ended_at: '2026-05-29T12:01:00+00:00', duration_s: 60, size_bytes: 60817408, width_px: 1920, height_px: 1080, fps: 30, protected: 0, state: 'available' },
+]
+
+const CRASH_EVENTS = [
+    { id: 1, trip_id: 3, ts: '2026-05-26T17:16:42+00:00', severity: 'potential_crash', source: 'obd_speed', peak_decel_g: 1.34, speed_before_mph: 52.0, speed_after_mph: 0.0, detail: '52.0 -> 0.0 mph (1.34g)' },
+    { id: 2, trip_id: 1, ts: '2026-05-28T07:52:10+00:00', severity: 'hard_brake', source: 'obd_speed', peak_decel_g: 0.62, speed_before_mph: 38.0, speed_after_mph: 11.0, detail: '38.0 -> 11.0 mph (0.62g)' },
+]
+
+const withVideoUrl = (c) => ({ ...c, video_url: `/api/videos/${c.clip_id}/stream` })
 
 // ---------------------------------------------------------------------------
 // Express — API routes
@@ -173,6 +197,95 @@ app.post('/api/dtcs/:id/diagnose', (req, res) => {
     const dtc = DTCS.find(d => d.id === Number(req.params.id))
     if (!dtc) return res.status(404).json({ error: 'DTC not found' })
     res.json({ code: dtc.code, diagnosis: dtc.claude_diagnosis, diagnosed_at: dtc.diagnosed_at, cached: true })
+})
+
+// ---------------------------------------------------------------------------
+// Dashcam — stubs for every real route.
+//
+// Deletes here apply immediately, unlike production, where they are an MQTT
+// round trip through db_writer and the Jetson. The client sees the same 202 in
+// both cases, so its optimistic-update path is still what gets exercised.
+// ---------------------------------------------------------------------------
+
+app.get('/api/trips/:id/videos', (req, res) => {
+    res.json(CLIPS.filter(c => c.trip_id === Number(req.params.id)).map(withVideoUrl))
+})
+
+app.get('/api/trips/:id/crash-events', (req, res) => {
+    res.json(CRASH_EVENTS.filter(e => e.trip_id === Number(req.params.id)))
+})
+
+app.get('/api/videos', (req, res) => {
+    let out = CLIPS
+    if (req.query.unassigned === '1') out = out.filter(c => c.trip_id === null)
+    else if (req.query.trip_id) out = out.filter(c => c.trip_id === Number(req.query.trip_id))
+    res.json(out.map(withVideoUrl))
+})
+
+// No real footage in dev — 502 is what the UI shows as "dashcam unreachable",
+// which is the state worth being able to see while building the player.
+app.get('/api/videos/:clipId/stream', (req, res) => {
+    res.status(502).json({ error: 'Dashcam unreachable (mock server has no footage)' })
+})
+
+app.delete('/api/videos/unassigned', (req, res) => {
+    const doomed = CLIPS.filter(c => c.trip_id === null && !c.protected)
+    CLIPS = CLIPS.filter(c => !doomed.includes(c))
+    res.status(202).json({ requested: doomed.length, status: 'pending' })
+})
+
+app.delete('/api/videos/:clipId', (req, res) => {
+    const clip = CLIPS.find(c => c.clip_id === req.params.clipId)
+    if (!clip) return res.status(404).json({ error: 'Clip not found' })
+    if (clip.protected && req.query.force !== '1') {
+        return res.status(409).json({ error: 'Clip is protected by a crash event. Retry with ?force=1.' })
+    }
+    CLIPS = CLIPS.filter(c => c !== clip)
+    res.status(202).json({ requested: 1, status: 'pending' })
+})
+
+app.delete('/api/trips/:id/videos', (req, res) => {
+    const tripId = Number(req.params.id)
+    const clips = CLIPS.filter(c => c.trip_id === tripId)
+    const blocked = clips.filter(c => c.protected).length
+    if (blocked > 0 && req.query.force !== '1') {
+        return res.status(409).json({
+            error: `${blocked} clip(s) are protected by a crash event. Retry with ?force=1 to delete them anyway.`,
+            protected_count: blocked,
+        })
+    }
+    CLIPS = CLIPS.filter(c => c.trip_id !== tripId)
+    res.status(202).json({ requested: clips.length, status: 'pending' })
+})
+
+app.post('/api/trips/:id/videos/protect', (req, res) => {
+    const wanted = req.body?.protected
+    if (typeof wanted !== 'boolean') {
+        return res.status(400).json({ error: 'Body must be { protected: boolean }' })
+    }
+    CLIPS = CLIPS.map(c => c.trip_id === Number(req.params.id)
+        ? { ...c, protected: wanted ? 1 : 0 } : c)
+    res.status(202).json({ protected: wanted, status: 'pending' })
+})
+
+app.get('/api/dashcam/status', (req, res) => {
+    const live = CLIPS.filter(c => c.state !== 'deleted')
+    const sum = (f) => live.reduce((a, c) => a + (f(c) ? c.size_bytes : 0), 0)
+    res.json({
+        clip_count:       live.length,
+        bytes_used:       sum(() => true),
+        protected_count:  live.filter(c => c.protected).length,
+        protected_bytes:  sum(c => c.protected),
+        unassigned_count: live.filter(c => c.trip_id === null).length,
+        unassigned_bytes: sum(c => c.trip_id === null),
+        oldest_clip_at:   live.length ? live.map(c => c.started_at).sort()[0] : null,
+        newest_clip_at:   live.length ? live.map(c => c.started_at).sort().at(-1) : null,
+        jetson: {
+            status: 'recording', recording: true, storage_pressure: false, stale: false,
+            disk_total_bytes: 250 * 2 ** 30, disk_free_bytes: 141 * 2 ** 30,
+            received_at: new Date().toISOString(),
+        },
+    })
 })
 
 // ---------------------------------------------------------------------------

@@ -32,7 +32,32 @@ SyslogIdentifier=vision_publisher
 Environment=PYTHONUNBUFFERED=1
 Environment=MQTT_HOST=192.168.100.1
 # Environment=VISION_SOURCE=test
-# Environment=VISION_SNAPSHOT_INTERVAL=10
+
+# Dashcam recording. OFF here on purpose — turn it on per device in
+# ~/.maverick-env (bootstrap.sh writes VISION_RECORD_ENABLED=0 there), so
+# landing this code on a Jetson never changes its behaviour until somebody
+# deliberately enables it. The camera is shared with YOLO inference via a tee;
+# if recording cannot start, camera.py falls back to cv2.VideoCapture and
+# inference keeps running.
+Environment=VISION_RECORD_ENABLED=0
+Environment=MAVERICK_DASHCAM_ROOT=/var/lib/maverick-dashcam
+# Environment=VISION_RECORD_SOURCE=auto      # auto | csi | usb | test
+# Environment=VISION_RECORD_DEVICE=/dev/video0
+# Environment=VISION_RECORD_WIDTH=1920
+# Environment=VISION_RECORD_HEIGHT=1080
+# Environment=VISION_RECORD_FPS=30
+# Environment=VISION_RECORD_BITRATE=8000000
+# Environment=VISION_RECORD_SEGMENT_S=60
+# Environment=MAVERICK_DASHCAM_RETENTION_DAYS=30
+# Environment=MAVERICK_DASHCAM_MAX_BYTES=128849018880       # 120 GiB
+# Environment=MAVERICK_DASHCAM_MIN_FREE_BYTES=10737418240   # 10 GiB
+
+# Per-device overrides, e.g. when the Jetson reaches the Pi over WiFi instead of
+# the direct ethernet link. Listed AFTER the Environment= lines so it wins.
+# The leading '-' makes it optional. This file is NOT in git, so a device-
+# specific MQTT_HOST survives every pull-deploy:
+#   echo 'MQTT_HOST=10.0.0.18' > /home/jetson/.maverick-env
+EnvironmentFile=-/home/jetson/.maverick-env
 
 [Install]
 WantedBy=multi-user.target

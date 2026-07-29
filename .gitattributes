@@ -6,3 +6,6 @@
 *.timer   text eol=lf
 # kanshi parses this on the Pi; a trailing CRLF would corrupt the last token.
 deploy/kanshi.config text eol=lf
+# mosquitto and chrony parse these on the Pi/Jetson. A CRLF here is not
+# cosmetic: mosquitto reads the CR as part of the value and refuses to start.
+*.conf    text eol=lf

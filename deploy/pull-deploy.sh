@@ -15,27 +15,23 @@ TAG_FILE="$HOME/.maverick-deployed-tag"
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
-# Derive owner/repo from the git remote so this script needs no hardcoded values
-REPO=$(git -C "$PROD" remote get-url origin \
-  | sed -E 's|.*github\.com[:/]||' \
-  | sed 's|\.git$||')
+# shellcheck source=lib/release.sh
+. "$PROD/deploy/lib/release.sh"
 
-API="https://api.github.com/repos/$REPO/releases/latest"
-AUTH_HEADER=""
-if [ -n "${GITHUB_TOKEN:-}" ]; then
-  AUTH_HEADER="Authorization: Bearer $GITHUB_TOKEN"
-fi
+REPO=$(mav_repo_slug "$PROD")
 
 # ---------------------------------------------------------------------------
 # Check for a new release
 # ---------------------------------------------------------------------------
-RELEASE=$(curl -sf ${AUTH_HEADER:+-H "$AUTH_HEADER"} "$API") || {
-  echo "[pull-deploy] Failed to fetch release info from $API" >&2
+RELEASE=$(mav_fetch_release "$REPO" "latest") || {
+  echo "[pull-deploy] Failed to fetch latest release for $REPO" >&2
   exit 1
 }
 
-LATEST_TAG=$(echo "$RELEASE" | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])")
+LATEST_TAG=$(printf '%s' "$RELEASE" | mav_json_field tag_name)
 DEPLOYED_TAG=$(cat "$TAG_FILE" 2>/dev/null || echo "none")
+
+[ -n "$LATEST_TAG" ] || { echo "[pull-deploy] Could not read tag_name from release JSON" >&2; exit 1; }
 
 if [ "$LATEST_TAG" = "$DEPLOYED_TAG" ]; then
   echo "[pull-deploy] Already at $LATEST_TAG — nothing to do"
@@ -47,34 +43,29 @@ echo "[pull-deploy] New release: $LATEST_TAG (was: $DEPLOYED_TAG)"
 # ---------------------------------------------------------------------------
 # Download release assets
 # ---------------------------------------------------------------------------
-get_asset_url() {
-  local name="$1"
-  echo "$RELEASE" | python3 -c "
-import sys, json
-for a in json.load(sys.stdin)['assets']:
-    if a['name'] == '$name':
-        print(a['browser_download_url'])
-        break
-"
-}
-
-BINARY_URL=$(get_asset_url "maverick-telemetry")
-DIST_URL=$(get_asset_url "client-dist.tar.gz")
+BINARY_URL=$(mav_asset_url "$RELEASE" "maverick-telemetry")
+DIST_URL=$(mav_asset_url "$RELEASE" "client-dist.tar.gz")
 
 [ -z "$BINARY_URL" ] && { echo "[pull-deploy] Missing asset: maverick-telemetry" >&2; exit 1; }
 [ -z "$DIST_URL"   ] && { echo "[pull-deploy] Missing asset: client-dist.tar.gz" >&2; exit 1; }
 
-curl -fL ${AUTH_HEADER:+-H "$AUTH_HEADER"} -o "$WORK_DIR/maverick-telemetry" "$BINARY_URL"
-curl -fL ${AUTH_HEADER:+-H "$AUTH_HEADER"} -o "$WORK_DIR/client-dist.tar.gz"  "$DIST_URL"
+mav_download "$BINARY_URL" "$WORK_DIR/maverick-telemetry"
+mav_download "$DIST_URL"   "$WORK_DIR/client-dist.tar.gz"
 
 # ---------------------------------------------------------------------------
 # Apply — update Python/server files from git, then overlay build artifacts
+#
+# Check out the RELEASE TAG, not origin/main: a commit landing between the
+# release build and this poll would otherwise pair newer Python/server source
+# with the older binary we just downloaded. The tag pins both to one commit.
 # ---------------------------------------------------------------------------
 cd "$PROD"
 
-git fetch origin main
-git checkout origin/main -- \
-  obd_poller.py trip_manager.py db_writer.py db/ server/ deploy/
+git fetch origin main --tags --force
+# NOTE: the root-level Python files are an explicit allow-list, not a glob — a
+# new *.py at the repo root is NOT deployed unless it is named here.
+git checkout "$LATEST_TAG" -- \
+  obd_poller.py trip_manager.py db_writer.py crash_detector.py db/ server/ deploy/
 
 # Tauri binary
 mkdir -p client/src-tauri/target/release
@@ -137,7 +128,21 @@ source venv/bin/activate
 # default and the running services never see the schema changes.
 MAVERICK_DB_PATH=/home/pi/maverick_telemetry.db python db/migrate.py
 
-cd server && npm install --omit=dev && cd ..
+# Retry npm install: better-sqlite3 downloads a prebuilt arm64 binary via
+# prebuild-install, and on a slow link that download times out — after which it
+# falls back to compiling with node-gyp, which is broken on Debian 13
+# ("ModuleNotFoundError: No module named 'gyp'"). A transient timeout would
+# otherwise fail the whole deploy, and flaky connectivity is the normal case
+# for a vehicle that only sees WiFi in the driveway.
+cd server
+npm_ok=0
+for attempt in 1 2 3; do
+  if npm install --omit=dev; then npm_ok=1; break; fi
+  echo "[pull-deploy] npm install failed (attempt $attempt/3) — retrying in $((attempt * 10))s" >&2
+  sleep $((attempt * 10))
+done
+cd ..
+[ "$npm_ok" -eq 1 ] || { echo "[pull-deploy] npm install failed after 3 attempts" >&2; exit 1; }
 
 sudo systemctl restart express_bridge kiosk
 

@@ -1,0 +1,43 @@
+# deploy/crash_detector.service
+# Install: sudo cp deploy/crash_detector.service /etc/systemd/system/
+#          sudo systemctl daemon-reload
+#          sudo systemctl enable crash_detector
+#          sudo systemctl start crash_detector
+
+[Unit]
+Description=Maverick Telemetry — Crash / hard-brake detector
+Documentation=https://github.com/AlexTs-dev/maverick-telemetry-hub
+# Must start after db_writer so a crash_event published immediately on boot is
+# still recorded — this process only ever publishes, it never touches SQLite.
+After=network.target mosquitto.service db_writer.service
+Requires=mosquitto.service db_writer.service
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/maverick-telemetry-hub
+ExecStart=/home/pi/maverick-telemetry-hub/venv/bin/python crash_detector.py
+
+Restart=always
+RestartSec=5
+TimeoutStopSec=10
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=crash_detector
+
+Environment=PYTHONUNBUFFERED=1
+
+# Detection thresholds. Defaults are a starting point calibrated against 1Hz
+# OBD speed, not a finished result — review real hard_brake events in the
+# dashboard before tightening or loosening them.
+# Environment=MAVERICK_CRASH_DECEL_G=0.90
+# Environment=MAVERICK_CRASH_MIN_SPEED_MPH=15
+# Environment=MAVERICK_CRASH_STOP_MPH=5
+# Environment=MAVERICK_BRAKE_DECEL_G=0.55
+# Environment=MAVERICK_BRAKE_MIN_SPEED_MPH=10
+# Environment=MAVERICK_CRASH_MAX_GAP_S=3.0
+# Environment=MAVERICK_CRASH_COOLDOWN_S=10
+
+[Install]
+WantedBy=multi-user.target

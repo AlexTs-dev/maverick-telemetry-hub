@@ -1,0 +1,66 @@
+# jetson/deploy/clip_server.service
+# Install ON THE JETSON (not the Pi):
+#   sudo cp jetson/deploy/clip_server.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now clip_server
+#
+# bootstrap.sh additionally drops a per-device override at
+# /etc/systemd/system/clip_server.service.d/paths.conf setting
+# MAVERICK_DASHCAM_ROOT and ReadOnlyPaths= to the real clip root.
+
+[Unit]
+Description=Maverick Dashcam — read-only clip server (HTTP + Range)
+Documentation=https://github.com/AlexTs-dev/maverick-telemetry-hub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jetson
+WorkingDirectory=/home/jetson/maverick-telemetry-hub/jetson
+ExecStart=/home/jetson/maverick-telemetry-hub/jetson/venv/bin/python clip_server.py
+
+Restart=always
+RestartSec=5
+TimeoutStopSec=10
+
+# Log to journald — view with: journalctl -u clip_server -f
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=clip_server
+
+Environment=PYTHONUNBUFFERED=1
+Environment=MAVERICK_DASHCAM_ROOT=/var/lib/maverick-dashcam
+Environment=MAVERICK_CLIP_SERVER_PORT=8088
+
+# Per-device overrides (clip root on an NVMe, alternate port). Not in git, so
+# it survives every pull-deploy. Listed after Environment= so it wins.
+EnvironmentFile=-/home/jetson/.maverick-env
+
+# ---------------------------------------------------------------------------
+# Hardening
+#
+# This is the Jetson's ONLY inbound listener, and it exists solely to hand out
+# bytes that are already on disk. The process implements no write methods; these
+# make that structural rather than a matter of the code staying correct.
+#
+# ReadOnlyPaths on the clip root is the important one: even a bug in this
+# process cannot destroy footage. Deletion is the recorder's job — it owns the
+# files, mirroring the Pi's single-writer invariant.
+# ---------------------------------------------------------------------------
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+PrivateDevices=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+ReadOnlyPaths=/var/lib/maverick-dashcam
+
+[Install]
+WantedBy=multi-user.target

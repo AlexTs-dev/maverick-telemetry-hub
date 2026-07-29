@@ -50,6 +50,11 @@ jobs:
       - name: Package client dist
         run: tar -czf client-dist.tar.gz -C client/dist .
 
+      # The Jetson needs no build artifact of its own — it runs pure Python and
+      # pulls jetson/ straight from this release's git tag, exactly as the Pi
+      # pulls its Python/server source. Its only binary payload is the trained
+      # models, which are gitignored and ship separately via
+      # tools/publish-models.sh (CI cannot regenerate trained weights).
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

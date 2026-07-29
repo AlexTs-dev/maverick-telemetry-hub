@@ -1,0 +1,13 @@
+# jetson/deploy/pull-deploy.timer
+# Polls GitHub for new releases and new model weights.
+
+[Unit]
+Description=Maverick Vision — Poll GitHub for new releases every 2 minutes
+
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=120
+Unit=pull-deploy.service
+
+[Install]
+WantedBy=timers.target

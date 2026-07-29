@@ -147,8 +147,72 @@ CREATE TABLE IF NOT EXISTS vision_frames (
 );
 
 CREATE INDEX IF NOT EXISTS idx_vision_frames_trip ON vision_frames(trip_id, ts);
-    """
-    
+    """,
+
+    5: """
+-- Dashcam: footage recorded on the Jetson, plus the crash events that protect it.
+--
+-- The FOOTAGE ITSELF NEVER LIVES ON THE PI. The Jetson has the disk, so clips
+-- stay there and clip_path is relative to its clip root -- the Express bridge
+-- proxies range requests to clip_server.py on the Jetson. These rows are
+-- metadata and the authoritative trip linkage, nothing more.
+--
+-- trip_id is NULLABLE here, unlike readings/dtcs/vision_frames. Recording runs
+-- whenever the Jetson is powered, so a clip can legitimately exist outside any
+-- trip (engine off, or before RPM crosses the threshold that opens one).
+-- Dropping those would strand files on disk that the dashboard could neither
+-- show nor delete, so they are kept and surfaced as unassigned footage instead.
+--
+-- state tracks a delete in flight: Express cannot write the DB (single-writer
+-- invariant), so a delete is an MQTT command -- the row goes pending_delete
+-- immediately and is removed only once the Jetson confirms the file is gone.
+-- NOTE: _apply_migration splits migrations on semicolons -- never put one
+-- inside a comment, only at true statement boundaries.
+CREATE TABLE IF NOT EXISTS dashcam_clips (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    clip_id     TEXT NOT NULL UNIQUE,
+    trip_id     INTEGER REFERENCES trips(id),
+    started_at  TEXT NOT NULL,
+    ended_at    TEXT NOT NULL,
+    duration_s  REAL,
+    size_bytes  INTEGER,
+    width_px    INTEGER,
+    height_px   INTEGER,
+    fps         REAL,
+    clip_path   TEXT NOT NULL,
+    protected   INTEGER NOT NULL DEFAULT 0,
+    state       TEXT NOT NULL DEFAULT 'available',
+    created_at  TEXT NOT NULL
+);
+
+-- Hard decelerations detected from the OBD speed stream by crash_detector.py.
+-- severity is 'hard_brake' (logged only) or 'potential_crash' (also protects
+-- the trip's footage from the retention purge).
+--
+-- source is deliberately a column rather than an assumption: 1Hz OBD speed is a
+-- coarse instrument, and an IMU publishing to the same topic later should not
+-- need a schema change.
+CREATE TABLE IF NOT EXISTS crash_events (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    trip_id          INTEGER REFERENCES trips(id),
+    ts               TEXT NOT NULL,
+    severity         TEXT NOT NULL,
+    source           TEXT NOT NULL DEFAULT 'obd_speed',
+    peak_decel_g     REAL,
+    speed_before_mph REAL,
+    speed_after_mph  REAL,
+    detail           TEXT
+);
+
+-- Denormalised onto trips so the trip list can badge a crash without a join,
+-- mirroring how dtc_count already works.
+ALTER TABLE trips ADD COLUMN crash_count INTEGER DEFAULT 0;
+ALTER TABLE trips ADD COLUMN footage_protected INTEGER DEFAULT 0;
+
+CREATE INDEX IF NOT EXISTS idx_dashcam_clips_trip    ON dashcam_clips(trip_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_dashcam_clips_started ON dashcam_clips(started_at);
+CREATE INDEX IF NOT EXISTS idx_crash_events_trip     ON crash_events(trip_id, ts);
+"""
 }
 
 CURRENT_VERSION = max(MIGRATIONS)

@@ -21,7 +21,16 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' tauri: asset:; connect-src http://localhost:3000 ws://localhost:3000; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; script-src 'self'"
+      "_csp_comment": [
+        "media-src is REQUIRED for dashcam playback: connect-src only covers",
+        "fetch/XHR/WebSocket, not <video>/<img>, so without an explicit",
+        "media-src the element falls back to default-src and the video is",
+        "blocked outright with no visible error.",
+        "http://localhost:3000 was likewise missing from img-src, which would",
+        "have blocked Jetson snapshots served from /api/snapshots the moment",
+        "anything rendered them."
+      ],
+      "csp": "default-src 'self' tauri: asset:; connect-src http://localhost:3000 ws://localhost:3000; style-src 'self' 'unsafe-inline'; img-src 'self' http://localhost:3000 data: blob:; media-src 'self' http://localhost:3000 blob:; script-src 'self'"
     }
   },
   "bundle": {

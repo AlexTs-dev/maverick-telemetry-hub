@@ -21,10 +21,14 @@ const MQTT_URL   = process.env.MQTT_URL  || 'mqtt://localhost:1883';
 // ~130 KB of base64 JPEG each. Never "simplify" this to maverick/# or
 // maverick/vision/#: everything subscribed here is rebroadcast to all
 // WS clients and stored 500-deep in the catch-up buffer.
+// maverick/dashcam/status is a small metadata heartbeat (storage counters), so
+// it is safe here — but subscribe to it EXPLICITLY, never maverick/dashcam/#.
+// The same rule as above applies: nothing large may reach this list.
 const MQTT_TOPICS = [
     'maverick/telemetry/#',
     'maverick/vision/status',
     'maverick/vision/scene',
+    'maverick/dashcam/status',
 ];
 
 // ---------------------------------------------------------------------------
@@ -36,6 +40,18 @@ const MQTT_TOPICS = [
 // ---------------------------------------------------------------------------
 const VISION_STALE_MS  = 15000;  // 3 missed heartbeats
 let   lastVisionStatus = null;   // { status: string, receivedAt: number } | null
+
+// ---------------------------------------------------------------------------
+// Last known dashcam status — storage counters and recording state from the
+// Jetson, on the same 5s heartbeat as vision/status.
+//
+// No separate Last Will: one MQTT connection gets one LWT, and the Jetson
+// spends it on maverick/vision/status. Both come from the same process, so a
+// vanished vision publisher means a vanished recorder — and the staleness
+// check below catches it either way.
+// ---------------------------------------------------------------------------
+const DASHCAM_STALE_MS  = 15000;
+let   lastDashcamStatus = null;  // { payload: object, receivedAt: number } | null
 
 
 
@@ -81,6 +97,10 @@ mqttClient.on('message', (topic, payload) => {
                             : 'unknown',
             receivedAt: Date.now(),
         };
+    }
+
+    if (topic === 'maverick/dashcam/status' && typeof parsed === 'object' && parsed !== null) {
+        lastDashcamStatus = { payload: parsed, receivedAt: Date.now() };
     }
 
     const entry = {
@@ -132,4 +152,39 @@ function getVisionStatus() {
     return lastVisionStatus.status;
 }
 
-module.exports = { mqttClient, onMessage, getRecentMessages, getVisionStatus };
+// ---------------------------------------------------------------------------
+// Current dashcam state for /api/dashcam/status.
+// Returns null when the Jetson has never reported, and marks the last known
+// payload stale rather than discarding it — knowing the disk was 90% full
+// before the cable was yanked is more useful than knowing nothing.
+// ---------------------------------------------------------------------------
+function getDashcamStatus() {
+    if (!lastDashcamStatus) return null;
+    return {
+        ...lastDashcamStatus.payload,
+        stale: Date.now() - lastDashcamStatus.receivedAt > DASHCAM_STALE_MS,
+        received_at: new Date(lastDashcamStatus.receivedAt).toISOString(),
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Publish. The bridge is otherwise a pure subscriber; it publishes only dashcam
+// commands, because Express must not write SQLite (db_writer is the single
+// writer) and must not touch the Jetson's files. Asking over MQTT is how it
+// does both without breaking either invariant.
+// ---------------------------------------------------------------------------
+function publish(topic, payload) {
+    if (!mqttClient.connected) {
+        console.warn(`[mqtt] Not connected — dropping publish to ${topic}`);
+        return false;
+    }
+    mqttClient.publish(topic, JSON.stringify(payload), { qos: 1 }, (err) => {
+        if (err) console.error(`[mqtt] Publish to ${topic} failed:`, err.message);
+    });
+    return true;
+}
+
+module.exports = {
+    mqttClient, onMessage, getRecentMessages,
+    getVisionStatus, getDashcamStatus, publish,
+};
