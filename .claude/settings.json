@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import json,sys; print\\(json.load\\(sys.stdin\\)['app']['security']['csp']\\)\")",
+      "Bash(python -c \"import json; print\\(json.load\\(open\\('client/src-tauri/tauri.conf.json'\\)\\)['app']['security']['csp']\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(python -c \"import jsonschema; print\\('jsonschema', jsonschema.__version__\\)\")",
+      "Bash(timeout 120 npx tauri info)"
+    ]
+  }
+}

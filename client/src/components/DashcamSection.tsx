@@ -6,6 +6,13 @@
 // the Pi, which range-forwards to the Jetson's clip server — so seeking works,
 // and the browser never learns the Jetson exists.
 //
+// KIOSK CSP: playback here depends on `media-src http://localhost:3000` in
+// client/src-tauri/tauri.conf.json. connect-src covers fetch/XHR/WebSocket but
+// NOT <video>, so without media-src the element falls back to default-src and
+// is blocked with no visible error — it just never plays. (That config is
+// schema-validated and rejects unknown keys, so the reason lives here rather
+// than as a comment beside it.)
+//
 // Deletion is asynchronous end to end (202 -> MQTT -> db_writer -> Jetson
 // unlinks -> row goes), and irreversible, so every path through it is behind an
 // AlertDialog. Protected clips are the footage a crash left behind: they need a
