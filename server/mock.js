@@ -161,6 +161,33 @@ const VISION = [
     { id: 5, trip_id: 3, ts: '2026-05-26T17:12:30+00:00', frame_id: 'e5f60718', source: 'event', width_px: 1280, height_px: 720, scene_label: 'highway', confidence: 0.85, snapshot_path: 'trip_000003/20260526T171230000Z_e5f60718_event.jpg' },
 ]
 
+// Live sign detections. On the real hub these arrive on maverick/vision/scene
+// only when the confirmed limit CHANGES, and the bridge holds the last one so a
+// reloaded dashboard can seed from /api/vision/speed-limit. Both halves are
+// mocked: SIGN_INTERVAL_MS broadcasts exercise the live path, and the endpoint
+// starts pre-populated so a page load has a sign to seed from immediately.
+// Values cycle the same set as the Jetson's synthetic mode.
+const SIGN_VALUES      = ['35', '55', '25', '65', '45']
+const SIGN_INTERVAL_MS = 20000
+
+let signIndex     = 0
+let lastSpeedLimit = null
+
+function nextSign() {
+    const value = SIGN_VALUES[signIndex++ % SIGN_VALUES.length]
+    lastSpeedLimit = {
+        ts:              new Date().toISOString(),
+        frame_id:        `mock${String(signIndex).padStart(4, '0')}`,
+        scene_label:     `speed_limit_${value}`,
+        speed_limit_mph: Number(value),
+        confidence:      0.82,
+        received_at:     new Date().toISOString(),
+    }
+    return lastSpeedLimit
+}
+
+nextSign()   // pre-populate, so the seed path has something on first load
+
 // ---------------------------------------------------------------------------
 // Express — API routes
 // ---------------------------------------------------------------------------
@@ -189,6 +216,9 @@ app.post('/api/version/update', (req, res) => {
     setTimeout(() => { mockUpdateAvailable = false }, 3000)
     res.json({ status: 'started' })
 })
+
+// Mirrors the real route: the last held sign, or null if none seen yet.
+app.get('/api/vision/speed-limit', (req, res) => res.json(lastSpeedLimit))
 
 app.get('/api/trips', (req, res) => res.json(TRIPS))
 
@@ -346,6 +376,23 @@ setInterval(() => {
         if (ws.readyState === ws.OPEN) ws.send(payload)
     })
 }, 1000)
+
+// A fresh sign every 20s, on the topic the bridge really forwards. The payload
+// is the /scene shape from jetson/vision_publisher.py — ts, frame_id,
+// scene_label, confidence — not the richer /frame one, which never reaches a
+// WebSocket client.
+setInterval(() => {
+    const { ts, frame_id, scene_label, confidence } = nextSign()
+    if (wss.clients.size === 0) return
+    const payload = JSON.stringify({
+        type:    'live',
+        topic:   'maverick/vision/scene',
+        message: { ts, frame_id, scene_label, confidence },
+    })
+    wss.clients.forEach(ws => {
+        if (ws.readyState === ws.OPEN) ws.send(payload)
+    })
+}, SIGN_INTERVAL_MS)
 
 // ---------------------------------------------------------------------------
 // Start

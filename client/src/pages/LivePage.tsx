@@ -1,9 +1,10 @@
 import { useRef, useEffect, useState } from 'react'
 import * as d3 from 'd3'
 import { useLiveTelemetry } from '@/contexts/WebSocketContext'
-import type { LiveReading, PollerStatus } from '@/contexts/WebSocketContext'
+import type { LiveReading, PollerStatus, SpeedLimitSighting } from '@/contexts/WebSocketContext'
 import { IconBoltFilled } from '@tabler/icons-react'
 import { Badge } from '@/components/ui/badge'
+import { SpeedLimitSign } from '@/components/SpeedLimitSign'
 import { cn }   from '@/lib/utils'
 
 // ---------------------------------------------------------------------------
@@ -33,6 +34,17 @@ function instantMpg(speed: number | null | undefined, gph: number | null | undef
   if (speed < 1)  return '0 mpg'              // idling: burning fuel, going nowhere
   const mpg = speed / gph
   return mpg > 99 ? '99+ mpg' : `${mpg.toFixed(mpg < 10 ? 1 : 0)} mpg`
+}
+
+// Coarse relative age — the only question being answered is "is this sign
+// current or a leftover", so seconds/minutes/hours is all the resolution the
+// driver can use at a glance.
+function ago(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000))
+  if (s < 60)   return `${s}s ago`
+  const m = Math.floor(s / 60)
+  if (m < 60)   return `${m}m ago`
+  return `${Math.floor(m / 60)}h ago`
 }
 
 // ---------------------------------------------------------------------------
@@ -215,6 +227,52 @@ function StatCell({ label, value }: { label: string; value: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// Speed limit cell — the last sign the Jetson read
+// ---------------------------------------------------------------------------
+// Sits in the stats strip rather than getting a row of its own: the 800x480
+// panel has no spare height, and this puts the sign directly above the speed
+// chart, which is the number it wants comparing against.
+//
+// The vision pipeline confirms a limit and then holds it — it never
+// re-publishes, and absence of a sign never clears it — so a sighting arrives
+// with no indication of whether it is still in force. Age is therefore shown
+// always, and a sighting past SIGN_STALE_MS fades: at road speed a limit that
+// old is probably a leftover, and a stale limit presented as current is the
+// one genuinely misleading thing this cell could do.
+
+const SIGN_STALE_MS = 5 * 60 * 1000
+
+function SpeedLimitCell({ sighting, now }: {
+  sighting: SpeedLimitSighting | null
+  now:      number
+}) {
+  const ageMs = sighting ? now - sighting.date.getTime() : Infinity
+  const stale = ageMs > SIGN_STALE_MS
+
+  return (
+    <div className="flex items-center justify-center gap-2 border-r last:border-r-0">
+      <SpeedLimitSign
+        size="sm"
+        value={sighting?.value ?? '––'}
+        className={cn(!sighting && 'opacity-25', sighting && stale && 'opacity-50')}
+      />
+      {/* No caption line: the sign says SPEED LIMIT itself, so the neighbouring
+          cells' label would only repeat it and crowd the strip. */}
+      <div className="flex flex-col leading-none gap-1.5">
+        <span className="text-[10px] text-muted-foreground tabular-nums">
+          {sighting ? ago(ageMs) : 'no sign'}
+        </span>
+        {sighting?.confidence != null && (
+          <span className="text-[9px] text-muted-foreground tabular-nums">
+            {Math.round(sighting.confidence * 100)}%
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Battery gauge — phone-style fill bar for HV pack state of charge
 // ---------------------------------------------------------------------------
 // A vertical rounded battery body with a terminal nub on top. The inner bar
@@ -380,7 +438,8 @@ function LiveChart({ readings, accessor, color, label, unit, yDomain }: LiveChar
 // ---------------------------------------------------------------------------
 
 export function LivePage() {
-  const { connected, pollerStatus, lastReading, readings, activeTripId } = useLiveTelemetry()
+  const { connected, pollerStatus, lastReading, readings, activeTripId,
+          lastSpeedLimit } = useLiveTelemetry()
   const r = lastReading
 
   // Tick every second so data-age re-evaluates even when readings stop arriving
@@ -443,7 +502,8 @@ export function LivePage() {
       </div>
 
       {/* Stats strip — 52px */}
-      <div className="grid grid-cols-3 h-[52px] border-b shrink-0">
+      <div className="grid grid-cols-4 h-[52px] border-b shrink-0">
+        <SpeedLimitCell sighting={lastSpeedLimit} now={now} />
         <StatCell label="coolant"  value={fmt(r?.coolant_temp_f, 0, '°F')} />
         <StatCell label="throttle" value={fmt(r?.throttle_pct, 0, '%')} />
         <StatCell label="economy"  value={instantMpg(r?.speed_mph, r?.fuel_rate_gph)} />

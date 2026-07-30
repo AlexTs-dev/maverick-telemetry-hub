@@ -17,6 +17,7 @@ import {
   type ReactNode,
 } from 'react'
 import type { Reading } from './TripContext'
+import { speedLimitValue } from '@/lib/utils'
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -35,6 +36,10 @@ const WS_URL =
     ? `ws://${window.location.host}`
     : 'ws://localhost:3000')
 
+// In a Tauri window the page isn't served from localhost:3000, so relative
+// URLs won't reach the Express server. Same pattern as TripContext/useVersion.
+const API = (TAURI ? 'http://localhost:3000' : '') + '/api'
+
 // Reconnect backoff — doubles each attempt up to MAX_BACKOFF
 const INITIAL_BACKOFF = 1000  // ms
 const MAX_BACKOFF     = 30000 // ms
@@ -48,6 +53,18 @@ export type PollerStatus = 'connected' | 'connecting' | 'disconnected' | 'unknow
 export interface LiveReading extends Reading {
   // Parsed Date object for D3 time scales
   date: Date
+}
+
+// The last speed-limit sign the Jetson confirmed. Held rather than streamed:
+// the vision pipeline publishes on change only and never re-publishes a value
+// it already holds, so this stays valid — and worth showing — long after the
+// message that carried it. date is the capture time, which is what the UI ages
+// the sighting by.
+export interface SpeedLimitSighting {
+  value:      string        // the number on the sign, e.g. "35"
+  confidence: number | null // 0-1 fraction, ML convention
+  ts:         string
+  date:       Date
 }
 
 interface WebSocketContextValue {
@@ -64,6 +81,9 @@ interface WebSocketContextValue {
 
   // Active trip info from MQTT events
   activeTripId:  number | null
+
+  // Latest sign from the Jetson — null until one is seen
+  lastSpeedLimit: SpeedLimitSighting | null
 
   // Manually reconnect if needed
   reconnect:     () => void
@@ -120,6 +140,37 @@ function parseReading(message: unknown): LiveReading | null {
 }
 
 // ---------------------------------------------------------------------------
+// Helper — parse a vision scene message into a sighting, or null
+//
+// Scene and sign detections share maverick/vision/scene and are told apart only
+// by the label prefix, so a scene label is a normal, expected null here. The
+// REST seed (/api/vision/speed-limit) is deliberately the same shape, so both
+// paths go through this one function.
+// ---------------------------------------------------------------------------
+
+function parseSpeedLimit(message: unknown): SpeedLimitSighting | null {
+  if (typeof message !== 'object' || message === null) return null
+  const m = message as Record<string, unknown>
+
+  const value = speedLimitValue(typeof m.scene_label === 'string' ? m.scene_label : null)
+  if (!value) return null
+
+  // No usable capture time means the sighting cannot be aged, and an
+  // un-ageable sign is worse than none: a stale limit shown as current is
+  // exactly the wrong thing to put in front of a driver.
+  if (typeof m.ts !== 'string') return null
+  const date = new Date(m.ts)
+  if (Number.isNaN(date.getTime())) return null
+
+  return {
+    value,
+    confidence: typeof m.confidence === 'number' ? m.confidence : null,
+    ts:         m.ts,
+    date,
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Provider
 // ---------------------------------------------------------------------------
 
@@ -129,6 +180,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   const [lastReading,  setLastReading]  = useState<LiveReading | null>(null)
   const [readings,     setReadings]     = useState<LiveReading[]>([])
   const [activeTripId, setActiveTripId] = useState<number | null>(null)
+  const [lastSpeedLimit, setLastSpeedLimit] = useState<SpeedLimitSighting | null>(null)
 
   const wsRef      = useRef<WebSocket | null>(null)
   const backoffRef = useRef(INITIAL_BACKOFF)
@@ -137,6 +189,14 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   // -------------------------------------------------------------------------
   // Process a single MQTT entry
   // -------------------------------------------------------------------------
+
+  // Keeps whichever sighting was captured later. Guards the REST seed racing
+  // a live message on load, and replaying the catch-up buffer out of order.
+  const recordSpeedLimit = useCallback((sighting: SpeedLimitSighting | null) => {
+    if (!sighting) return
+    setLastSpeedLimit(prev =>
+      prev && prev.date.getTime() >= sighting.date.getTime() ? prev : sighting)
+  }, [])
 
   const processEntry = useCallback((entry: MqttEntry) => {
     const { topic, message } = entry
@@ -166,7 +226,14 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     else if (topic.endsWith('/trip_close')) {
       setActiveTripId(null)
     }
-  }, [])
+
+    // maverick/vision/scene — the lightweight twin of a confirmed frame. Sign
+    // detections are the ones the live view surfaces; scene labels parse to
+    // null and are ignored here.
+    else if (topic.endsWith('/scene')) {
+      recordSpeedLimit(parseSpeedLimit(message))
+    }
+  }, [recordSpeedLimit])
 
   // -------------------------------------------------------------------------
   // WebSocket connection
@@ -227,6 +294,25 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     }
   }, [processEntry])
 
+  // -------------------------------------------------------------------------
+  // Seed the held sign from the bridge
+  //
+  // The sign in force was confirmed before this page loaded — possibly long
+  // before, since the vision pipeline publishes on change only — so the
+  // WebSocket cannot supply it and the catch-up buffer has evicted it. One
+  // request; live messages take over from there. Failure is silent: an
+  // unreachable bridge or an older server just means no sign until the next.
+  // -------------------------------------------------------------------------
+
+  useEffect(() => {
+    let cancelled = false
+    fetch(`${API}/vision/speed-limit`)
+      .then(res => (res.ok ? res.json() : null))
+      .then(body => { if (!cancelled) recordSpeedLimit(parseSpeedLimit(body)) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [recordSpeedLimit])
+
   useEffect(() => {
     connect()
     return () => {
@@ -254,6 +340,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
       lastReading,
       readings,
       activeTripId,
+      lastSpeedLimit,
       reconnect: connect,
     }}>
       {children}

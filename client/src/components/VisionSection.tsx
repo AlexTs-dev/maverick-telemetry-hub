@@ -2,11 +2,10 @@
 //
 // What the Jetson's camera recognised during a trip.
 //
-// Two kinds of detection arrive on the same endpoint, distinguished by a label
-// convention set in jetson/vision_publisher.py: a scene_label prefixed
-// "speed_limit_" came from the two-stage YOLO sign pipeline, anything else is a
-// whole-frame scene label. Speed limits get rendered as an actual sign because
-// that is the thing worth recognising at a glance.
+// Two kinds of detection arrive on the same endpoint, distinguished by the
+// "speed_limit_" label convention — see SpeedLimitSign.tsx, which owns both the
+// parser and the sign graphic. Speed limits get rendered as an actual sign
+// because that is the thing worth recognising at a glance.
 //
 // Snapshots are served by the Pi from /api/snapshots/<path>, written by
 // db_writer. They are genuinely optional — a frame row can exist with a missing
@@ -16,14 +15,8 @@
 import { useState } from 'react'
 import type { VisionFrame } from '@/contexts/TripContext'
 import { Badge } from '@/components/ui/badge'
-
-const SPEED_LIMIT_PREFIX = 'speed_limit_'
-
-function speedLimitValue(label: string | null): string | null {
-  if (!label || !label.startsWith(SPEED_LIMIT_PREFIX)) return null
-  const value = label.slice(SPEED_LIMIT_PREFIX.length)
-  return /^\d+$/.test(value) ? value : null
-}
+import { SpeedLimitSign } from '@/components/SpeedLimitSign'
+import { speedLimitValue } from '@/lib/utils'
 
 function formatTime(ts: string) {
   return new Date(ts).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
@@ -32,19 +25,6 @@ function formatTime(ts: string) {
 function prettyLabel(label: string | null) {
   if (!label) return 'unlabelled'
   return label.replace(/_/g, ' ')
-}
-
-// A US-style speed limit sign. Cheap to draw, and instantly readable on the
-// 800x480 in-cab panel in a way a text badge is not.
-function SpeedLimitSign({ value }: { value: string }) {
-  return (
-    <div className="shrink-0 w-11 h-14 rounded-[3px] bg-white text-black border-2 border-black
-                    flex flex-col items-center justify-center leading-none select-none">
-      <span className="text-[7px] font-semibold tracking-tight">SPEED</span>
-      <span className="text-[7px] font-semibold tracking-tight mb-0.5">LIMIT</span>
-      <span className="text-xl font-bold tabular-nums">{value}</span>
-    </div>
-  )
 }
 
 function Snapshot({ frame }: { frame: VisionFrame }) {

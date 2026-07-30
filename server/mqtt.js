@@ -53,7 +53,31 @@ let   lastVisionStatus = null;   // { status: string, receivedAt: number } | nul
 const DASHCAM_STALE_MS  = 15000;
 let   lastDashcamStatus = null;  // { payload: object, receivedAt: number } | null
 
+// ---------------------------------------------------------------------------
+// Last speed-limit sign the Jetson confirmed, off maverick/vision/scene.
+//
+// Held because that track publishes on CHANGE only and never re-publishes a
+// value it is already holding (see jetson/classifier.py _apply_transient): a
+// sign confirmed twenty minutes ago is still the current limit, so a dashboard
+// that only listens live shows nothing until the limit happens to change. The
+// catch-up ring buffer cannot cover it either — 1 Hz readings push a scene
+// message out of the 50-message catch-up window in under a minute.
+//
+// Memory only, like the two trackers above: a bridge restart forgets the sign
+// and it returns on the next confirmed sighting. No staleness field — how old
+// a sighting is, is a judgement the dashboard makes from ts.
+// ---------------------------------------------------------------------------
+const SPEED_LIMIT_PREFIX = 'speed_limit_';
+let   lastSpeedLimit     = null;  // { ts, frame_id, scene_label, ... } | null
 
+// "speed_limit_35" -> 35; a scene label or a malformed suffix -> null. The
+// prefix convention is set in jetson/vision_publisher.py and is the only thing
+// that distinguishes a sign event from a scene event on this topic.
+function speedLimitMph(label) {
+    if (typeof label !== 'string' || !label.startsWith(SPEED_LIMIT_PREFIX)) return null;
+    const suffix = label.slice(SPEED_LIMIT_PREFIX.length);
+    return /^\d+$/.test(suffix) ? Number(suffix) : null;
+}
 
 // ---------------------------------------------------------------------------
 // In-memory store of recent messages
@@ -101,6 +125,23 @@ mqttClient.on('message', (topic, payload) => {
 
     if (topic === 'maverick/dashcam/status' && typeof parsed === 'object' && parsed !== null) {
         lastDashcamStatus = { payload: parsed, receivedAt: Date.now() };
+    }
+
+    if (topic === 'maverick/vision/scene' && typeof parsed === 'object' && parsed !== null) {
+        const mph = speedLimitMph(parsed.scene_label);
+        // Scene labels share this topic and must not clobber the held sign.
+        // ts is the capture time and is what the dashboard ages the sign by, so
+        // a sighting without one is not usable and is dropped.
+        if (mph !== null && typeof parsed.ts === 'string') {
+            lastSpeedLimit = {
+                ts:              parsed.ts,
+                frame_id:        typeof parsed.frame_id === 'string' ? parsed.frame_id : null,
+                scene_label:     parsed.scene_label,
+                speed_limit_mph: mph,
+                confidence:      typeof parsed.confidence === 'number' ? parsed.confidence : null,
+                received_at:     new Date().toISOString(),
+            };
+        }
     }
 
     const entry = {
@@ -168,6 +209,15 @@ function getDashcamStatus() {
 }
 
 // ---------------------------------------------------------------------------
+// The last speed-limit sign confirmed by the Jetson, or null if none has been
+// seen since the bridge started. Lets a dashboard that just loaded show the
+// current limit instead of waiting for it to change.
+// ---------------------------------------------------------------------------
+function getLastSpeedLimit() {
+    return lastSpeedLimit;
+}
+
+// ---------------------------------------------------------------------------
 // Publish. The bridge is otherwise a pure subscriber; it publishes only dashcam
 // commands, because Express must not write SQLite (db_writer is the single
 // writer) and must not touch the Jetson's files. Asking over MQTT is how it
@@ -186,5 +236,5 @@ function publish(topic, payload) {
 
 module.exports = {
     mqttClient, onMessage, getRecentMessages,
-    getVisionStatus, getDashcamStatus, publish,
+    getVisionStatus, getDashcamStatus, getLastSpeedLimit, publish,
 };

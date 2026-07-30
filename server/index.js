@@ -17,7 +17,8 @@ require('dotenv').config();
 const express                        = require('express');
 const { createServer }               = require('http');
 const path                           = require('path');
-const { mqttClient, onMessage, getRecentMessages, getVisionStatus, getDashcamStatus } = require('./mqtt');
+const { mqttClient, onMessage, getRecentMessages, getVisionStatus, getDashcamStatus,
+        getLastSpeedLimit }                  = require('./mqtt');
 const { createWebSocketServer }      = require('./websocket');
 const tripsRouter                    = require('./routes/trips');
 const dtcsRouter                     = require('./routes/dtcs');
@@ -46,7 +47,15 @@ app.use('/api/videos',  videosRouter);
 // numbers can only come from its heartbeat.
 app.get('/api/dashcam/status', dashcamStatus(getDashcamStatus));
 
-// ---------------------------------------------------------------------------
+// Latest speed-limit sign the Jetson confirmed. The live view seeds from this
+// on load and follows maverick/vision/scene over the WebSocket after that —
+// without the seed a reload would show nothing until the limit next changes.
+// null body, not 404: "no sign since boot" is an empty state, not an error.
+app.get('/api/vision/speed-limit', (req, res) => {
+    res.json(getLastSpeedLimit());
+});
+
+// --------------------------------------------------------------------------- 
 // Snapshot images from the Jetson vision pipeline
 // Files are written by db_writer.py (the single writer); we only serve them.
 // ---------------------------------------------------------------------------
