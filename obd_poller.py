@@ -63,7 +63,10 @@ def _to_rpm(v):    return round(v.magnitude, 1)          if v is not None else N
 def _to_mph(v):    return round(v.to("mph").magnitude, 1) if v is not None else None
 def _to_f(v):      return round(v.to("degF").magnitude, 1) if v is not None else None
 def _to_pct(v):    return round(v.magnitude, 1)           if v is not None else None
-def _to_gph(v):    return round(v.magnitude, 3)           if v is not None else None
+# python-obd's FUEL_RATE decoder returns LITERS per hour (PID 0x5E, 0.05 L/h per
+# bit) — it must be converted, not just unwrapped, or the column named _gph holds
+# litres and every MPG derived from it comes out 3.785x too low.
+def _to_gph(v):    return round(v.to("gallon / hour").magnitude, 3) if v is not None else None
 def _to_v(v):      return round(v.to("volt").magnitude, 1) if v is not None else None
 def _raw(v):       return v  # decoder already returns a plain number
 

@@ -7,6 +7,7 @@ import { Button }     from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton }   from '@/components/ui/skeleton'
 import { DashcamSection } from '@/components/DashcamSection'
+import { VisionSection }  from '@/components/VisionSection'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -192,7 +193,7 @@ function pluck(readings: Reading[], key: keyof Reading): number[] {
 
 export function TripDetailPage() {
   const { id } = useParams<{ id: string }>()
-  const { trip, readings, dtcs, videos, crashEvents, loading, error } = useTrip(id!)
+  const { trip, readings, dtcs, videos, crashEvents, vision, loading, error } = useTrip(id!)
   const diagnose                         = useDiagnose()
   const navigate                         = useNavigate()
 
@@ -320,6 +321,10 @@ export function TripDetailPage() {
 
               {/* Dashcam footage (renders nothing when there are no clips) */}
               <DashcamSection tripId={id!} clips={videos} />
+
+              {/* What the Jetson recognised — speed limit signs and scenes.
+                  Renders nothing when the camera produced no detections. */}
+              <VisionSection frames={vision} />
 
               {/* DTCs */}
               {dtcs.length > 0 && (

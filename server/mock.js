@@ -149,6 +149,18 @@ const CRASH_EVENTS = [
 
 const withVideoUrl = (c) => ({ ...c, video_url: `/api/videos/${c.clip_id}/stream` })
 
+// Vision detections from the Jetson. A scene_label prefixed "speed_limit_"
+// came from the YOLO sign pipeline; anything else is a whole-frame scene label.
+// snapshot_url deliberately points at files that don't exist in dev — that
+// exercises the label-only fallback rather than a broken-image icon.
+const VISION = [
+    { id: 1, trip_id: 1, ts: '2026-05-28T07:46:30+00:00', frame_id: 'a1b2c3d4', source: 'event', width_px: 1280, height_px: 720, scene_label: 'speed_limit_35', confidence: 0.88, snapshot_path: 'trip_000001/20260528T074630000Z_a1b2c3d4_event.jpg' },
+    { id: 2, trip_id: 1, ts: '2026-05-28T07:52:10+00:00', frame_id: 'b2c3d4e5', source: 'event', width_px: 1280, height_px: 720, scene_label: 'speed_limit_50', confidence: 0.79, snapshot_path: 'trip_000001/20260528T075210000Z_b2c3d4e5_event.jpg' },
+    { id: 3, trip_id: 1, ts: '2026-05-28T07:58:02+00:00', frame_id: 'c3d4e5f6', source: 'event', width_px: 1280, height_px: 720, scene_label: 'residential', confidence: 0.71, snapshot_path: 'trip_000001/20260528T075802000Z_c3d4e5f6_event.jpg' },
+    { id: 4, trip_id: 3, ts: '2026-05-26T17:08:00+00:00', frame_id: 'd4e5f607', source: 'event', width_px: 1280, height_px: 720, scene_label: 'speed_limit_65', confidence: 0.93, snapshot_path: 'trip_000003/20260526T170800000Z_d4e5f607_event.jpg' },
+    { id: 5, trip_id: 3, ts: '2026-05-26T17:12:30+00:00', frame_id: 'e5f60718', source: 'event', width_px: 1280, height_px: 720, scene_label: 'highway', confidence: 0.85, snapshot_path: 'trip_000003/20260526T171230000Z_e5f60718_event.jpg' },
+]
+
 // ---------------------------------------------------------------------------
 // Express — API routes
 // ---------------------------------------------------------------------------
@@ -213,6 +225,17 @@ app.get('/api/trips/:id/videos', (req, res) => {
 
 app.get('/api/trips/:id/crash-events', (req, res) => {
     res.json(CRASH_EVENTS.filter(e => e.trip_id === Number(req.params.id)))
+})
+
+// Mirrors the real route: snapshot_path is a filesystem fact, snapshot_url is
+// a routing fact derived here so the DB never hardcodes routes.
+app.get('/api/trips/:id/vision', (req, res) => {
+    res.json(VISION
+        .filter(v => v.trip_id === Number(req.params.id))
+        .map(({ snapshot_path, ...frame }) => ({
+            ...frame,
+            snapshot_url: snapshot_path ? '/api/snapshots/' + snapshot_path : null,
+        })))
 })
 
 app.get('/api/videos', (req, res) => {

@@ -404,13 +404,22 @@ def compute_trip_summary(conn: sqlite3.Connection, trip_id: int) -> None:
             -- regen_kw * (1/3600) hours per second = kWh per reading
             ROUND(SUM(COALESCE(regen_kw, 0)) / 3600.0, 4)
                                                     AS total_regen_kwh,
-            -- MPH / (GPH * 1) = MPG (instantaneous avg)
+            -- Fuel economy is total distance / total fuel, NOT the mean of
+            -- per-reading MPG. Averaging instantaneous values weights a minute
+            -- spent idling at a light (0 mpg) the same as a minute cruising,
+            -- and skipping rows where fuel_rate_gph = 0 discarded every EV-mode
+            -- reading — precisely the distance a hybrid covers on no fuel at
+            -- all. Readings are a fixed 1 Hz, so each covers the same 1/3600 h
+            -- and that interval cancels out of the ratio, leaving
+            -- SUM(mph) / SUM(gph). Rows missing either field are excluded from
+            -- both sums so numerator and denominator span the same readings.
             ROUND(
-                AVG(CASE
-                    WHEN fuel_rate_gph > 0
-                    THEN speed_mph / fuel_rate_gph
-                    ELSE NULL
-                END), 1
+                SUM(CASE WHEN speed_mph IS NOT NULL AND fuel_rate_gph IS NOT NULL
+                         THEN speed_mph END)
+                / NULLIF(
+                    SUM(CASE WHEN speed_mph IS NOT NULL AND fuel_rate_gph IS NOT NULL
+                             THEN fuel_rate_gph END), 0
+                ), 1
             )                                       AS avg_fuel_economy_mpg,
             MIN(battery_soc_pct)                    AS min_battery_soc_pct
         FROM readings

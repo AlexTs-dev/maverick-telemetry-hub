@@ -90,6 +90,21 @@ export interface DashcamClip {
   video_url:  string
 }
 
+// A confirmed detection from the Jetson's vision pipeline, with the JPEG the
+// Pi persisted for it. scene_label prefixed "speed_limit_" came from the
+// speed-limit sign track; anything else is a whole-frame scene label.
+export interface VisionFrame {
+  id:           number
+  ts:           string
+  frame_id:     string | null
+  source:       string
+  width_px:     number | null
+  height_px:    number | null
+  scene_label:  string | null
+  confidence:   number | null
+  snapshot_url: string | null
+}
+
 // A hard deceleration detected from the OBD speed stream.
 //   hard_brake      — logged only, protects nothing
 //   potential_crash — also protects this trip's footage from the purge
@@ -138,12 +153,13 @@ interface TripDetailState {
   dtcs:        DTC[]
   videos:      DashcamClip[]
   crashEvents: CrashEvent[]
+  vision:      VisionFrame[]
   loading:     boolean
   error:       string | null
 }
 
 const EMPTY_DETAIL: TripDetailState = {
-  trip: null, readings: [], dtcs: [], videos: [], crashEvents: [],
+  trip: null, readings: [], dtcs: [], videos: [], crashEvents: [], vision: [],
   loading: false, error: null,
 }
 
@@ -213,17 +229,18 @@ export function TripProvider({ children }: { children: ReactNode }) {
     }))
 
     try {
-      const [trip, readings, dtcs, videos, crashEvents] = await Promise.all([
+      const [trip, readings, dtcs, videos, crashEvents, vision] = await Promise.all([
         apiFetch<Trip>(`/trips/${id}`),
         apiFetch<Reading[]>(`/trips/${id}/readings`),
         apiFetch<DTC[]>(`/trips/${id}/dtcs`),
         apiFetch<DashcamClip[]>(`/trips/${id}/videos`),
         apiFetch<CrashEvent[]>(`/trips/${id}/crash-events`),
+        apiFetch<VisionFrame[]>(`/trips/${id}/vision`),
       ])
 
       setDetailCache(prev => ({
         ...prev,
-        [id]: { trip, readings, dtcs, videos, crashEvents, loading: false, error: null },
+        [id]: { trip, readings, dtcs, videos, crashEvents, vision, loading: false, error: null },
       }))
     } catch (err) {
       setDetailCache(prev => ({

@@ -6,7 +6,10 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  // src-tauri/target holds Rust build output, including generated JS assets that
+  // ESLint cannot parse. It only appears after a local `npm run tauri:build`,
+  // which is why lint passed in CI but failed on a dev machine that had built.
+  globalIgnores(['dist', 'src-tauri/target']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

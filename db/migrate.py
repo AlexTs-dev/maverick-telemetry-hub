@@ -212,6 +212,45 @@ ALTER TABLE trips ADD COLUMN footage_protected INTEGER DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_dashcam_clips_trip    ON dashcam_clips(trip_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_dashcam_clips_started ON dashcam_clips(started_at);
 CREATE INDEX IF NOT EXISTS idx_crash_events_trip     ON crash_events(trip_id, ts);
+""",
+
+    6: """
+-- Backfill for the fuel-rate unit bug. obd_poller._to_gph used to store
+-- python-obd's FUEL_RATE magnitude straight into fuel_rate_gph, but that
+-- decoder returns LITRES per hour, so every row logged before the fix is
+-- 3.785411784x too large and every MPG derived from it 3.785x too small.
+--
+-- ORDERING IS LOAD-BEARING. This divides every existing reading exactly once,
+-- and cannot tell a converted row from an unconverted one. Stop db_writer and
+-- obd_poller BEFORE running it, and deploy the fixed poller before starting
+-- them again -- rows written in litres after this runs stay wrong, and rows
+-- written in gallons before it runs get divided a second time. The same trap
+-- applies to dev databases: seed.sql has always held true gallons, so seed a
+-- fresh DB only AFTER migrating, which is the existing order anyway.
+--
+-- The summaries are then recomputed from the corrected readings using the same
+-- distance-over-fuel formula db_writer now applies at trip close, so historical
+-- trips match newly closed ones. Trips whose readings predate fuel_rate logging
+-- entirely divide by a NULL sum and correctly stay NULL.
+-- NOTE: _apply_migration splits migrations on semicolons -- never put one
+-- inside a comment, only at true statement boundaries.
+UPDATE readings
+   SET fuel_rate_gph = ROUND(fuel_rate_gph / 3.785411784, 3)
+ WHERE fuel_rate_gph IS NOT NULL;
+
+UPDATE trip_summaries
+   SET avg_fuel_economy_mpg = (
+       SELECT ROUND(
+           SUM(CASE WHEN r.speed_mph IS NOT NULL AND r.fuel_rate_gph IS NOT NULL
+                    THEN r.speed_mph END)
+           / NULLIF(
+               SUM(CASE WHEN r.speed_mph IS NOT NULL AND r.fuel_rate_gph IS NOT NULL
+                        THEN r.fuel_rate_gph END), 0
+           ), 1
+       )
+         FROM readings r
+        WHERE r.trip_id = trip_summaries.trip_id
+   );
 """
 }
 
