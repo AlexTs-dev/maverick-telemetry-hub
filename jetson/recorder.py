@@ -38,6 +38,8 @@ Config (all env, all optional):
     MAVERICK_DASHCAM_ROOT         clip root (default /var/lib/maverick-dashcam)
     VISION_RECORD_DEVICE          V4L2 device (default /dev/video0)
     VISION_RECORD_SOURCE          auto | csi | usb (default auto)
+    VISION_CSI_FLIP               nvvidconv flip-method for CSI (default 0=none,
+                                  2=180deg for an inverted camera mount)
     VISION_RECORD_WIDTH/HEIGHT/FPS/BITRATE
     VISION_RECORD_SEGMENT_S       segment length, seconds (default 60)
     MAVERICK_DASHCAM_RETENTION_DAYS / _MAX_BYTES / _MIN_FREE_BYTES
@@ -76,6 +78,11 @@ DASHCAM_ROOT   = os.environ.get("MAVERICK_DASHCAM_ROOT", "/var/lib/maverick-dash
 
 RECORD_DEVICE  = os.environ.get("VISION_RECORD_DEVICE", "/dev/video0")
 RECORD_SOURCE  = os.environ.get("VISION_RECORD_SOURCE", "auto").strip().lower()
+# nvvidconv flip-method, applied to the CSI source BEFORE the tee so recording
+# and inference are corrected together. A camera mounted upside down otherwise
+# feeds the sign detector 180deg-rotated frames — far out of its training
+# distribution, which shows up as confident nonsense rather than as no output.
+CSI_FLIP       = _env_int("VISION_CSI_FLIP", 0)
 RECORD_WIDTH   = _env_int("VISION_RECORD_WIDTH", 1920)
 RECORD_HEIGHT  = _env_int("VISION_RECORD_HEIGHT", 1080)
 RECORD_FPS     = _env_int("VISION_RECORD_FPS", 30)
@@ -264,6 +271,10 @@ def _profiles() -> list[tuple[str, str]]:
     usb_raw  = f"v4l2src device={dev} io-mode=2 ! video/x-raw,width={w},height={h},framerate={fps}/1"
     csi      = (f"nvarguscamerasrc ! video/x-raw(memory:NVMM),width={w},height={h},"
                 f"framerate={fps}/1,format=NV12")
+    if CSI_FLIP:
+        # Stays in NVMM, so the profile's nvmm=True contract still holds.
+        csi += (f" ! nvvidconv flip-method={CSI_FLIP} "
+                f"! video/x-raw(memory:NVMM),format=NV12")
 
     if RECORD_SOURCE == "test":
         raw_profile("test", f"videotestsrc is-live=true ! video/x-raw,width={w},height={h},"

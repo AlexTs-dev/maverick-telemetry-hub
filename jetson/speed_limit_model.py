@@ -81,8 +81,15 @@ def init() -> bool:
             if not os.path.exists(path):
                 raise FileNotFoundError(path)
 
-        _det = YOLO(DETECTOR_PATH)
-        _cls = YOLO(CLASSIFIER_PATH)
+        # task= is REQUIRED for .engine files and must not be left to inference.
+        # A .pt carries its task in the checkpoint, but a serialized TensorRT
+        # engine does not: ultralytics warns "Unable to automatically guess model
+        # task, assuming 'task=detect'" and then parses the classifier's 9 class
+        # scores as detection boxes, failing warmup with "input shape last
+        # dimension expected 4 but input shape is torch.Size([9, 1])". Naming
+        # both tasks explicitly keeps the .pt and .engine paths identical.
+        _det = YOLO(DETECTOR_PATH, task="detect")
+        _cls = YOLO(CLASSIFIER_PATH, task="classify")
 
         # Warmup: engine deserialization + first-call CUDA setup (~1-3s)
         # must happen here, never on the classifier tick path.
