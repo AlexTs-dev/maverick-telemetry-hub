@@ -233,9 +233,19 @@ def _profiles() -> list[tuple[str, str]]:
     def raw_profile(name: str, source: str, nvmm: bool):
         if encoder is None:
             return
+        # An NVMM source cannot feed a CPU encoder directly: nvarguscamerasrc and
+        # nvv4l2decoder hand out video/x-raw(memory:NVMM), and videoconvert will
+        # not negotiate with NVMM caps — the pipeline fails to link at build time
+        # ("could not link videoconvert to openh264enc"), taking the csi and
+        # usb-mjpg-hw profiles down with it. nvvidconv is the element that copies
+        # buffers out of NVMM into system memory. The NVENC chain already starts
+        # with nvvidconv and stays in NVMM, so it needs no help.
+        enc = encoder
+        if nvmm and encoder.startswith("videoconvert"):
+            enc = f"nvvidconv ! video/x-raw,format=I420 ! {encoder}"
         candidates.append((name, (
             f"{source} ! tee name=t "
-            f"t. ! queue max-size-buffers=8 ! {encoder} ! {_record_tail()} "
+            f"t. ! queue max-size-buffers=8 ! {enc} ! {_record_tail()} "
             f"t. ! {_infer_tail(nvmm)}"
         )))
 
