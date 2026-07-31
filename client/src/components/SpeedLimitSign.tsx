@@ -13,10 +13,13 @@
 
 import { cn } from '@/lib/utils'
 
-// sm fits the live view's 52px stats strip; md is the trip-history row.
+// sm is the compact inline form; md is the trip-history row; lg is the live
+// view's stats panel, which owns the lower half of the 800x480 display and is
+// read at a glance from the driver's seat.
 const SIZES = {
-  sm: { box: 'w-9 h-11',  caption: 'text-[6px]', value: 'text-base' },
-  md: { box: 'w-11 h-14', caption: 'text-[7px]', value: 'text-xl'   },
+  sm: { box: 'w-9 h-11',       caption: 'text-[6px]',  value: 'text-base' },
+  md: { box: 'w-11 h-14',      caption: 'text-[7px]',  value: 'text-xl'   },
+  lg: { box: 'w-26 h-32',      caption: 'text-[11px]', value: 'text-5xl'  },
 } as const
 
 interface SpeedLimitSignProps {

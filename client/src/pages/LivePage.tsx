@@ -1,20 +1,10 @@
-import { useRef, useEffect, useState } from 'react'
-import * as d3 from 'd3'
+import { useEffect, useState } from 'react'
 import { useLiveTelemetry } from '@/contexts/WebSocketContext'
-import type { LiveReading, PollerStatus, SpeedLimitSighting } from '@/contexts/WebSocketContext'
+import type { PollerStatus, SpeedLimitSighting } from '@/contexts/WebSocketContext'
 import { IconBoltFilled } from '@tabler/icons-react'
 import { Badge } from '@/components/ui/badge'
 import { SpeedLimitSign } from '@/components/SpeedLimitSign'
 import { cn }   from '@/lib/utils'
-
-// ---------------------------------------------------------------------------
-// D3 chart config
-// ---------------------------------------------------------------------------
-
-const VB_W = 380, VB_H = 110
-const M    = { top: 4, right: 8, bottom: 18, left: 38 }
-const IW   = VB_W - M.left - M.right
-const IH   = VB_H - M.top  - M.bottom
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -214,14 +204,26 @@ function StatusDot({ status }: { status: PollerStatus }) {
 }
 
 // ---------------------------------------------------------------------------
-// Stat cell (small strip below gauges)
+// Stat cell (panel below gauges)
 // ---------------------------------------------------------------------------
+// Sized for the lower half of the 800x480 panel, which these four cells own
+// outright. Each cell is 200px wide, which is what caps the type size: at lg a
+// worst-case "205°F" or "100%" still clears the cell without wrapping.
 
-function StatCell({ label, value }: { label: string; value: string }) {
+function StatCell({ label, value, size = 'lg' }: {
+  label: string
+  value: string
+  size?: 'lg' | 'md'
+}) {
   return (
-    <div className="flex flex-col items-center justify-center border-r last:border-r-0">
-      <span className="text-lg font-semibold tabular-nums leading-none">{value}</span>
-      <span className="text-[9px] text-muted-foreground uppercase tracking-wider mt-1">{label}</span>
+    <div className="flex flex-col items-center justify-center gap-3 border-r last:border-r-0 px-2">
+      <span className={cn(
+        'font-semibold tabular-nums leading-none whitespace-nowrap',
+        size === 'lg' ? 'text-5xl' : 'text-4xl',
+      )}>
+        {value}
+      </span>
+      <span className="text-[11px] text-muted-foreground uppercase tracking-[0.15em]">{label}</span>
     </div>
   )
 }
@@ -229,9 +231,8 @@ function StatCell({ label, value }: { label: string; value: string }) {
 // ---------------------------------------------------------------------------
 // Speed limit cell — the last sign the Jetson read
 // ---------------------------------------------------------------------------
-// Sits in the stats strip rather than getting a row of its own: the 800x480
-// panel has no spare height, and this puts the sign directly above the speed
-// chart, which is the number it wants comparing against.
+// Sits in the stats panel as the leftmost cell, at the same weight as the
+// numbers beside it.
 //
 // The vision pipeline confirms a limit and then holds it — it never
 // re-publishes, and absence of a sign never clears it — so a sighting arrives
@@ -250,22 +251,18 @@ function SpeedLimitCell({ sighting, now }: {
   const stale = ageMs > SIGN_STALE_MS
 
   return (
-    <div className="flex items-center justify-center gap-2 border-r last:border-r-0">
+    <div className="flex flex-col items-center justify-center gap-3 border-r last:border-r-0">
       <SpeedLimitSign
-        size="sm"
+        size="lg"
         value={sighting?.value ?? '––'}
         className={cn(!sighting && 'opacity-25', sighting && stale && 'opacity-50')}
       />
       {/* No caption line: the sign says SPEED LIMIT itself, so the neighbouring
-          cells' label would only repeat it and crowd the strip. */}
-      <div className="flex flex-col leading-none gap-1.5">
-        <span className="text-[10px] text-muted-foreground tabular-nums">
-          {sighting ? ago(ageMs) : 'no sign'}
-        </span>
+          cells' label would only repeat it. Age sits where their labels do. */}
+      <div className="flex items-center gap-2 text-[11px] text-muted-foreground tabular-nums leading-none">
+        <span>{sighting ? ago(ageMs) : 'no sign'}</span>
         {sighting?.confidence != null && (
-          <span className="text-[9px] text-muted-foreground tabular-nums">
-            {Math.round(sighting.confidence * 100)}%
-          </span>
+          <span className="opacity-70">{Math.round(sighting.confidence * 100)}%</span>
         )}
       </div>
     </div>
@@ -339,106 +336,11 @@ function BatteryGauge({ soc, tempF, volts, charging }: {
 }
 
 // ---------------------------------------------------------------------------
-// D3 live line chart
-// ---------------------------------------------------------------------------
-
-interface LiveChartProps {
-  readings: LiveReading[]
-  accessor: (r: LiveReading) => number | null
-  color:    string
-  label:    string
-  unit?:    string
-  yDomain?: [number, number]
-}
-
-function LiveChart({ readings, accessor, color, label, unit, yDomain }: LiveChartProps) {
-  const svgRef   = useRef<SVGSVGElement>(null)
-  const initRef  = useRef(false)
-  const gRef     = useRef<d3.Selection<SVGGElement,    unknown, null, undefined> | null>(null)
-  const xAxisRef = useRef<d3.Selection<SVGGElement,    unknown, null, undefined> | null>(null)
-  const yAxisRef = useRef<d3.Selection<SVGGElement,    unknown, null, undefined> | null>(null)
-  const pathRef  = useRef<d3.Selection<SVGPathElement, unknown, null, undefined> | null>(null)
-  const clipId   = `clip-${label.replace(/\W+/g, '')}`
-
-  useEffect(() => {
-    if (!svgRef.current) return
-    const svg = d3.select(svgRef.current)
-
-    if (!initRef.current) {
-      initRef.current = true
-      svg.append('defs').append('clipPath').attr('id', clipId)
-        .append('rect').attr('width', IW).attr('height', IH + 2)
-      const g = svg.append('g').attr('transform', `translate(${M.left},${M.top})`)
-      gRef.current = g
-      xAxisRef.current = g.append('g').attr('class', 'x-axis').attr('transform', `translate(0,${IH})`)
-      yAxisRef.current = g.append('g').attr('class', 'y-axis')
-      pathRef.current  = g.append('path')
-        .attr('fill', 'none').attr('clip-path', `url(#${clipId})`)
-        .attr('stroke-width', 1.5).attr('stroke-linejoin', 'round').attr('stroke-linecap', 'round')
-        .style('stroke', color)
-    }
-
-    if (readings.length < 2) return
-    const valid = readings.filter(r => accessor(r) != null)
-    if (valid.length < 2) return
-
-    const x = d3.scaleTime()
-      .domain(d3.extent(readings, r => r.date) as [Date, Date]).range([0, IW])
-
-    const vals  = valid.map(r => accessor(r) as number)
-    const rawLo = Math.min(...vals), rawHi = Math.max(...vals)
-    const pad   = (rawHi - rawLo) * 0.08 || 1
-    const y = d3.scaleLinear()
-      .domain(yDomain ?? [rawLo - pad, rawHi + pad]).range([IH, 0]).nice()
-
-    const line = d3.line<LiveReading>()
-      .defined(r => accessor(r) != null)
-      .x(r => x(r.date)).y(r => y(accessor(r) as number))
-      .curve(d3.curveMonotoneX)
-
-    pathRef.current?.attr('d', line(readings))
-
-    const fg  = 'var(--muted-foreground)'
-    const bdr = 'var(--border)'
-
-    xAxisRef.current
-      ?.call(d3.axisBottom(x).ticks(4).tickSize(-IH)
-        .tickFormat(d => d3.timeFormat('%M:%S')(d as Date)))
-      .call(g => g.select('.domain').remove())
-      .call(g => g.selectAll<SVGLineElement, unknown>('.tick line').style('stroke', bdr).style('stroke-dasharray', '2,3'))
-      .call(g => g.selectAll<SVGTextElement, unknown>('.tick text').style('fill', fg).style('font-size', '9px'))
-
-    yAxisRef.current
-      ?.call(d3.axisLeft(y).ticks(3).tickSize(-IW))
-      .call(g => g.select('.domain').remove())
-      .call(g => g.selectAll<SVGLineElement, unknown>('.tick line').style('stroke', bdr).style('stroke-dasharray', '2,3'))
-      .call(g => g.selectAll<SVGTextElement, unknown>('.tick text').style('fill', fg).style('font-size', '9px'))
-
-  }, [readings])
-
-  return (
-    <div className="rounded-lg border bg-card p-2 flex flex-col gap-1 min-h-0 overflow-hidden">
-      <p className="text-[10px] text-muted-foreground uppercase tracking-wider leading-none px-1 shrink-0">
-        {label}{unit && ` · ${unit}`}
-      </p>
-      {readings.every(r => accessor(r) == null) ? (
-        <div className="flex-1 flex items-center justify-center text-[10px] text-muted-foreground">
-          waiting for data…
-        </div>
-      ) : (
-        <svg ref={svgRef} viewBox={`0 0 ${VB_W} ${VB_H}`}
-          preserveAspectRatio="none" className="w-full flex-1 min-h-0" />
-      )}
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
 export function LivePage() {
-  const { connected, pollerStatus, lastReading, readings, activeTripId,
+  const { connected, pollerStatus, lastReading, activeTripId,
           lastSpeedLimit } = useLiveTelemetry()
   const r = lastReading
 
@@ -501,30 +403,14 @@ export function LivePage() {
         />
       </div>
 
-      {/* Stats strip — 52px */}
-      <div className="grid grid-cols-4 h-[52px] border-b shrink-0">
+      {/* Stats panel — fills the remaining ~256px */}
+      <div className="flex-1 grid grid-cols-4 min-h-0">
         <SpeedLimitCell sighting={lastSpeedLimit} now={now} />
         <StatCell label="coolant"  value={fmt(r?.coolant_temp_f, 0, '°F')} />
         <StatCell label="throttle" value={fmt(r?.throttle_pct, 0, '%')} />
-        <StatCell label="economy"  value={instantMpg(r?.speed_mph, r?.fuel_rate_gph)} />
-      </div>
-
-      {/* Charts — fill remaining ~204px */}
-      <div className="flex-1 grid grid-cols-2 gap-2 p-2 min-h-0">
-        <LiveChart
-          readings={readings}
-          accessor={r => r.speed_mph}
-          color="var(--chart-1)"
-          label="Speed" unit="mph"
-          yDomain={[0, 80]}
-        />
-        <LiveChart
-          readings={readings}
-          accessor={r => r.rpm}
-          color="var(--chart-3)"
-          label="Engine RPM"
-          yDomain={[0, 5000]}
-        />
+        {/* Economy carries its own unit and can read "99+ mpg" — seven glyphs
+            against the others' four — so it takes the smaller step. */}
+        <StatCell label="economy"  value={instantMpg(r?.speed_mph, r?.fuel_rate_gph)} size="md" />
       </div>
 
     </div>
