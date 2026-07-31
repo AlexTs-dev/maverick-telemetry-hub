@@ -44,6 +44,65 @@ VISION_SOURCE = os.environ.get("VISION_SOURCE", "auto")
 FRAME_WIDTH  = 1280
 FRAME_HEIGHT = 720
 
+# Windscreen colour correction, as per-channel gains applied to inference
+# frames.
+#
+# Laminated automotive glass is green-tinted and absorbs red. Measured through
+# this vehicle's screen against a white speed-limit sign — the exact reference
+# that matters, since it is what the classifier has to read — R sits ~20% below
+# G and B, and G and B track each other. Red deficit with G≈B is cyan, which is
+# what the footage looks like. The same ratio held on sunlit concrete, shaded
+# sign and tree canopy, so it is systematic optics rather than scene colour.
+#
+# This matters because the detector trains on LISA and MTSD: public imagery
+# shot without this windscreen. The cast is a domain shift the weights have
+# never seen, not a quirk they have already absorbed.
+#
+# Applied HERE, and deliberately not in recorder.py's pipeline:
+#   - this is the one point every source rung passes through, so the classifier
+#     gets the same correction whichever rung it landed on;
+#   - nvarguscamerasrc exposes no per-channel gain, and the wbmode presets move
+#     along the colour-temperature axis while this is a tint-axis cast — mode 5
+#     (daylight) makes it visibly worse, not better;
+#   - the RECORDED footage keeps the sensor's real output. A correction fitted
+#     against one scene does not belong baked into the dashcam evidence.
+#
+# Defaults are 1.0 — no correction, no per-frame cost — until a device opts in
+# via ~/.maverick-env. See jetson/CAMERA-TUNING.md for how to measure them.
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        log.warning("%s=%r is not a number — using %.3f", name, raw, default)
+        return default
+
+
+WB_GAIN_R = _env_float("VISION_WB_GAIN_R", 1.0)
+WB_GAIN_G = _env_float("VISION_WB_GAIN_G", 1.0)
+WB_GAIN_B = _env_float("VISION_WB_GAIN_B", 1.0)
+
+
+def _wb_lut() -> Optional[np.ndarray]:
+    """A 256-entry per-channel table, or None when every gain is 1.0.
+
+    A lookup table rather than `frame * gains`: the multiply would promote a
+    1280x720x3 uint8 array to float and back every frame, on a board that is
+    already encoding H.264 in software. cv2.LUT does it in one pass with no
+    intermediate, and saturating into uint8 also gives the clipping for free.
+    """
+    gains = (WB_GAIN_B, WB_GAIN_G, WB_GAIN_R)   # OpenCV frames are BGR
+    if all(abs(g - 1.0) < 1e-3 for g in gains):
+        return None
+    ramp = np.arange(256, dtype=np.float32)
+    table = np.stack([np.clip(ramp * g, 0, 255) for g in gains], axis=-1)
+    return table.astype(np.uint8).reshape(256, 1, 3)
+
+
+WB_LUT = _wb_lut()
+
 # cv2.VideoCapture buffers ~4 frames. A read after a long gap (sparse sampling)
 # would return stale pixels stamped with a fresh ts — silently breaking OBD
 # alignment — so reads after a gap drain the buffer first. The recorder path
@@ -124,6 +183,15 @@ class FrameSource:
 
     def start(self) -> str:
         """Resolve the best available source. Returns the resulting mode."""
+        # Logged unconditionally: a colour correction that is silently off is
+        # indistinguishable from one that is on but wrong, and both present as
+        # "the detector still misses signs".
+        if WB_LUT is None:
+            log.info("Windscreen WB correction: off (all gains 1.0)")
+        else:
+            log.info("Windscreen WB correction: R %.3f  G %.3f  B %.3f",
+                     WB_GAIN_R, WB_GAIN_G, WB_GAIN_B)
+
         if self._recorder is not None and VISION_SOURCE != "test":
             if self._recorder.start():
                 self._recorder_active = True
@@ -224,6 +292,12 @@ class FrameSource:
                 log.warning("Camera read failed — releasing, falling back to test pattern")
                 self._cap.release()
                 self._cap = None
+
+        if frame is not None and WB_LUT is not None:
+            # Real camera frames only. The test pattern is synthetic and never
+            # went through a windscreen, so correcting it would just make the
+            # dev-machine fallback lie about what the optics do.
+            frame = cv2.LUT(frame, WB_LUT)
 
         if frame is None:
             frame = test_pattern_frame(self._frame_count)

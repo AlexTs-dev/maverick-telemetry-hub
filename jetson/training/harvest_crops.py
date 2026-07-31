@@ -27,6 +27,7 @@ from collections import Counter
 from pathlib import Path
 
 import cv2
+import numpy as np
 import yaml
 
 SPEED_CLASS_PATTERNS = [
@@ -102,6 +103,38 @@ def iter_images(root: Path):
 def save_crop(crop, dest: Path):
     dest.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(dest), cv2.resize(crop, (CROP_SIZE, CROP_SIZE)))
+
+
+def parse_gains(text: str):
+    """'R,G,B' -> (r, g, b) floats."""
+    parts = [p.strip() for p in text.split(",")]
+    if len(parts) != 3:
+        raise argparse.ArgumentTypeError(
+            f"expected three comma-separated gains R,G,B — got {text!r}")
+    try:
+        vals = tuple(float(p) for p in parts)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"gains must be numbers — got {text!r}")
+    if any(v <= 0 or v > 4 for v in vals):
+        raise argparse.ArgumentTypeError(
+            f"gains must be in (0, 4] — got {vals}. These are multipliers, "
+            f"not percentages.")
+    return vals
+
+
+def wb_lut(gains):
+    """256-entry per-channel table for (R, G, B) gains, in OpenCV BGR order.
+
+    Mirrors camera.py's _wb_lut() rather than importing it: this script runs on
+    a Windows training box, and the Jetson runtime must not become a build-time
+    dependency of the training tooling. The arithmetic is identical on purpose
+    — mined crops have to land in the same colour space the detector sees in
+    the truck, or the classifier learns a cast that production does not have.
+    """
+    r, g, b = gains
+    ramp = np.arange(256, dtype=np.float32)
+    table = np.stack([np.clip(ramp * c, 0, 255) for c in (b, g, r)], axis=-1)
+    return table.astype(np.uint8).reshape(256, 1, 3)
 
 
 def gt_mode(args) -> int:
@@ -192,6 +225,14 @@ def mining_mode(args) -> int:
     out_dir = args.out / "unsorted"
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Applied to the WHOLE FRAME before detection, not to the saved crop: in
+    # the truck the detector itself runs on corrected pixels, so mining through
+    # an uncorrected frame would pick different boxes than production does.
+    lut = wb_lut(args.wb_gains) if args.wb_gains else None
+    if lut is not None:
+        print(f"Applying WB gains R={args.wb_gains[0]} G={args.wb_gains[1]} "
+              f"B={args.wb_gains[2]} to every frame before detection.")
+
     total = 0
     for video in args.video:
         cap = cv2.VideoCapture(str(video))
@@ -203,6 +244,8 @@ def mining_mode(args) -> int:
             ok, frame = cap.read()
             if not ok:
                 break
+            if lut is not None:
+                frame = cv2.LUT(frame, lut)
             if frame_idx % args.stride == 0:
                 boxes = model.predict(frame, conf=0.35, verbose=False)[0].boxes
                 for k in range(len(boxes) if boxes is not None else 0):
@@ -243,6 +286,13 @@ def main(argv=None) -> int:
                     help="mining mode: sample every Nth frame")
     ap.add_argument("--other-cap", type=int, default=500,
                     help="GT mode: max 'other' crops in train (val proportional)")
+    ap.add_argument("--wb-gains", type=parse_gains, metavar="R,G,B",
+                    help="mining mode: per-channel gains applied to each frame "
+                         "before detection, matching the runtime's "
+                         "VISION_WB_GAIN_* windscreen correction (e.g. "
+                         "1.252,0.891,0.927). Use for footage recorded BEFORE "
+                         "that correction reached the pipeline; omit for "
+                         "already-corrected footage or you double-correct.")
     args = ap.parse_args(argv)
 
     if args.video:
@@ -250,6 +300,12 @@ def main(argv=None) -> int:
             ap.error("--video (mining mode) requires --detector")
         return mining_mode(args)
     if args.src:
+        if args.wb_gains:
+            # LISA and MTSD were not shot through this truck's windscreen, so
+            # they carry no cast to undo. Applying gains here would introduce
+            # one and quietly poison the ground-truth half of the dataset.
+            ap.error("--wb-gains applies to mining mode only; public datasets "
+                     "have no windscreen cast to correct")
         return gt_mode(args)
     ap.error("give --src (GT mode) or --video --detector (mining mode)")
 

@@ -133,6 +133,32 @@ CSI_SENSOR_MODE     = _env_int("VISION_CSI_SENSOR_MODE", -1)        # -1 = let A
 INFER_WIDTH  = _env_int("VISION_RECORD_INFER_WIDTH", 1280)
 INFER_HEIGHT = _env_int("VISION_RECORD_INFER_HEIGHT", 720)
 
+# Pixels on target: CROP instead of downscale.
+#
+# The scale above throws away half the linear resolution before YOLO ever sees
+# a frame, and YOLO then letterboxes to its own imgsz (960) — so a sign loses
+# 1920 -> 1280 -> 960, a factor of 2. That compounds with a hard floor:
+# speed_limit_model rejects any box under VISION_SL_MIN_BOX_PX (24) measured in
+# THIS frame's coordinates, so a distant sign is not merely harder to read, it
+# is discarded before the value classifier runs.
+#
+# Cropping at native resolution instead costs nothing: a 960x960 centre crop
+# fed to a detector running imgsz=960 is resampled zero times, so a sign keeps
+# every sensor pixel it started with — roughly double the current linear size.
+# The price is field of view, and it is a real price: half the width. Distant
+# signs sit near the vanishing point, which is why this is the right trade for
+# reading them early, but a sign at the frame edge is now outside the crop.
+#
+# OFF by default. Landing this code on a Jetson must not silently change what
+# the detector sees; opt in per device via ~/.maverick-env, and verify against
+# real drives rather than a parked car.
+INFER_CROP     = _env_flag("VISION_INFER_CROP", "0")
+INFER_CROP_W   = _env_int("VISION_INFER_CROP_W", 960)
+INFER_CROP_H   = _env_int("VISION_INFER_CROP_H", 960)
+# Signs sit above the road surface, so the useful crop is usually not vertically
+# centred. Positive moves the window DOWN, matching image coordinates.
+INFER_CROP_Y   = _env_int("VISION_INFER_CROP_Y", 0)
+
 # Sized against the measured disk: the Orin Nano devkit here has a 937 GiB NVMe
 # with ~880 GiB free. At 8 Mbps (~3.6 GB/hour) a 400 GiB budget holds roughly
 # 110 hours, so for any realistic amount of driving the 30-DAY AGE LIMIT is what
@@ -251,21 +277,66 @@ def _record_tail() -> str:
     )
 
 
+def infer_crop_rect() -> Optional[tuple[int, int, int, int]]:
+    """(x0, y0, x1, y1) of the native-resolution inference crop, or None.
+
+    Public so focus_assist/focus_server can show the operator the exact region
+    the detector will see — aiming a camera at a window you cannot see is how
+    signs end up just outside it.
+
+    Clamped rather than validated: a crop wider than the sensor is an operator
+    typo, and silently using the whole width beats failing the pipeline and
+    losing both inference and footage.
+    """
+    if not INFER_CROP:
+        return None
+    # Even origin AND even size: chroma is subsampled 2x in I420/NV12, so an
+    # odd value in either makes nvvidconv refuse the crop or shift the colour
+    # planes against the luma.
+    cw = max(2, min(INFER_CROP_W, RECORD_WIDTH)) & ~1
+    ch = max(2, min(INFER_CROP_H, RECORD_HEIGHT)) & ~1
+    x0 = ((RECORD_WIDTH - cw) // 2) & ~1
+    y0 = (RECORD_HEIGHT - ch) // 2 + INFER_CROP_Y
+    y0 = max(0, min(y0, RECORD_HEIGHT - ch)) & ~1
+    return x0, y0, x0 + cw, y0 + ch
+
+
 def _infer_tail(nvmm: bool, decode: str = "") -> str:
-    """Downscaled BGR into the appsink for the classifier.
+    """Native-resolution crop, or downscaled BGR, into the appsink.
 
     leaky=downstream plus drop=true/max-buffers=1 is what makes a slow YOLO pass
     unable to stall recording: this branch throws frames away rather than
     applying backpressure through the tee.
     """
     prefix = f"{decode} ! " if decode else ""
+    rect = infer_crop_rect()
+
     if nvmm and _has_element("nvvidconv"):
-        scale = (f"nvvidconv ! video/x-raw,format=BGRx,"
-                 f"width={INFER_WIDTH},height={INFER_HEIGHT} ! videoconvert "
+        if rect:
+            x0, y0, x1, y1 = rect
+            # nvvidconv's left/right/top/bottom are a source RECTANGLE, not
+            # counts of pixels to remove — passing counts fails negotiation.
+            # It then scales that rectangle to the output caps, so the caps MUST
+            # restate the crop size; anything else silently re-introduces the
+            # resampling this exists to avoid.
+            scale = (f"nvvidconv left={x0} right={x1} top={y0} bottom={y1} "
+                     f"! video/x-raw,format=BGRx,"
+                     f"width={x1 - x0},height={y1 - y0} ! videoconvert "
+                     f"! video/x-raw,format=BGR")
+        else:
+            scale = (f"nvvidconv ! video/x-raw,format=BGRx,"
+                     f"width={INFER_WIDTH},height={INFER_HEIGHT} ! videoconvert "
+                     f"! video/x-raw,format=BGR")
+    elif rect:
+        x0, y0, x1, y1 = rect
+        # videocrop takes COUNTS, the opposite convention to nvvidconv above.
+        scale = (f"videoconvert ! videocrop left={x0} right={RECORD_WIDTH - x1} "
+                 f"top={y0} bottom={RECORD_HEIGHT - y1} "
                  f"! video/x-raw,format=BGR")
     else:
         scale = (f"videoconvert ! videoscale ! video/x-raw,format=BGR,"
                  f"width={INFER_WIDTH},height={INFER_HEIGHT}")
+
     return (f"queue max-size-buffers=2 leaky=downstream ! {prefix}{scale} "
             f"! appsink name=infersink drop=true max-buffers=1 sync=false")
 
@@ -458,6 +529,18 @@ class Recorder:
                 self._profile = name
                 log.info(f"Recording started — profile={name} {RECORD_WIDTH}x{RECORD_HEIGHT}@"
                          f"{RECORD_FPS} {RECORD_BITRATE // 1000}kbps segments={SEGMENT_S}s")
+                # The inference window decides what the detector can possibly
+                # see. Log it either way: "the sign was outside the crop" and
+                # "the sign was too small" look identical from the outside.
+                rect = infer_crop_rect()
+                if rect:
+                    x0, y0, x1, y1 = rect
+                    log.info(f"Inference window: native crop {x1 - x0}x{y1 - y0} "
+                             f"at ({x0},{y0}) — no rescale, "
+                             f"{100 * (x1 - x0) // RECORD_WIDTH}% of frame width")
+                else:
+                    log.info(f"Inference window: full frame scaled to "
+                             f"{INFER_WIDTH}x{INFER_HEIGHT}")
                 if name != "usb-h264" and not _has_element("nvv4l2h264enc"):
                     # Worth saying out loud: this board has no NVENC, so every
                     # frame is being encoded on the same CPU that runs

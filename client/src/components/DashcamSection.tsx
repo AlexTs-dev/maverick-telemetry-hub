@@ -31,13 +31,15 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  IconChevronRight, IconMaximize, IconMinimize,
+  IconChevronRight, IconColorSwatch, IconMaximize, IconMinimize,
   IconPlayerPauseFilled, IconPlayerPlayFilled,
 } from '@tabler/icons-react'
 import type { DashcamClip } from '@/contexts/TripContext'
 import { useDashcam } from '@/contexts/TripContext'
 import { Badge }  from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { WindscreenFilter } from '@/components/WindscreenFilter'
+import { WINDSCREEN_FILTER_ID } from '@/lib/windscreen'
 import { Slider } from '@/components/ui/slider'
 import { cn }     from '@/lib/utils'
 import {
@@ -190,6 +192,10 @@ export function DashcamSection({ tripId, clips }: { tripId: string; clips: Dashc
   const [playing, setPlaying]     = useState(false)
   const [failed, setFailed]       = useState<Set<string>>(new Set())
   const [showSegments, setShowSegments] = useState(false)
+  // On by default: the raw footage is genuinely cyan, so corrected is the
+  // truthful-looking view. Off stays one click away because the stored file is
+  // the uncorrected original and it should remain possible to see it.
+  const [wbCorrect, setWbCorrect] = useState(true)
   const [fullscreen, setFullscreen]     = useState(false)
 
   const [busy, setBusy]               = useState<Set<string>>(new Set())
@@ -469,8 +475,10 @@ export function DashcamSection({ tripId, clips }: { tripId: string; clips: Dashc
                      [&:fullscreen_video]:max-h-full [&:fullscreen_video]:rounded-none"
         >
           <div className="relative">
+            <WindscreenFilter />
             <video
               ref={videoRef}
+              style={wbCorrect ? { filter: `url(#${WINDSCREEN_FILTER_ID})` } : undefined}
               // No audio branch exists in recorder.py's pipeline, so muting
               // costs nothing — and muted media is exempt from the autoplay
               // gating that would otherwise refuse the play() at each segment
@@ -541,6 +549,25 @@ export function DashcamSection({ tripId, clips }: { tripId: string; clips: Dashc
             <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">
               {formatTimecode(globalTime)} / {formatTimecode(total)}
             </span>
+
+            {/* Colour correction is a view setting, not an edit — the stored
+                clip is unchanged either way, so this toggles what you see
+                rather than what is kept. */}
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn('h-7 w-7 shrink-0', !wbCorrect && 'text-muted-foreground')}
+              onClick={() => setWbCorrect(v => !v)}
+              aria-pressed={wbCorrect}
+              title={wbCorrect
+                ? 'Windscreen colour correction on — showing corrected footage'
+                : 'Windscreen colour correction off — showing the raw sensor output'}
+              aria-label={wbCorrect
+                ? 'Turn off windscreen colour correction'
+                : 'Turn on windscreen colour correction'}
+            >
+              <IconColorSwatch className="size-3.5" />
+            </Button>
 
             <Button
               variant="ghost"
