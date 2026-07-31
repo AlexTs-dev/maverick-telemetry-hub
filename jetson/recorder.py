@@ -133,6 +133,25 @@ CSI_SENSOR_MODE     = _env_int("VISION_CSI_SENSOR_MODE", -1)        # -1 = let A
 INFER_WIDTH  = _env_int("VISION_RECORD_INFER_WIDTH", 1280)
 INFER_HEIGHT = _env_int("VISION_RECORD_INFER_HEIGHT", 720)
 
+# Capture resolution, decoupled from record resolution.
+#
+# The IMX477 offers two modes on this device tree:
+#     1920 x 1080 @ 60fps      <- what Argus picks by default
+#     3840 x 2160 @ 30fps
+# The pipeline runs at 30fps regardless, so the 4K mode costs NO frame rate —
+# it just reads out twice the linear resolution of a 12.3MP sensor that was
+# otherwise delivering 2MP of it.
+#
+# This has to be separate from RECORD_WIDTH/HEIGHT because the two wants are
+# opposed: inference wants every sensor pixel it can get, while the encoder on
+# this board is SOFTWARE (no NVENC) and cannot take 4K. So capture wide, crop
+# the inference branch from native pixels, and let nvvidconv scale the record
+# branch back down to RECORD_WIDTH/HEIGHT in hardware before encoding.
+#
+# Defaults to the record size, so unset changes nothing.
+CAPTURE_WIDTH  = _env_int("VISION_CAPTURE_WIDTH", RECORD_WIDTH)
+CAPTURE_HEIGHT = _env_int("VISION_CAPTURE_HEIGHT", RECORD_HEIGHT)
+
 # Pixels on target: CROP instead of downscale.
 #
 # The scale above throws away half the linear resolution before YOLO ever sees
@@ -293,11 +312,14 @@ def infer_crop_rect() -> Optional[tuple[int, int, int, int]]:
     # Even origin AND even size: chroma is subsampled 2x in I420/NV12, so an
     # odd value in either makes nvvidconv refuse the crop or shift the colour
     # planes against the luma.
-    cw = max(2, min(INFER_CROP_W, RECORD_WIDTH)) & ~1
-    ch = max(2, min(INFER_CROP_H, RECORD_HEIGHT)) & ~1
-    x0 = ((RECORD_WIDTH - cw) // 2) & ~1
-    y0 = (RECORD_HEIGHT - ch) // 2 + INFER_CROP_Y
-    y0 = max(0, min(y0, RECORD_HEIGHT - ch)) & ~1
+    # Against CAPTURE, not RECORD: the crop is taken from the source buffer
+    # before the record branch scales anything, and taking it from the record
+    # size would silently discard the extra resolution 4K capture exists for.
+    cw = max(2, min(INFER_CROP_W, CAPTURE_WIDTH)) & ~1
+    ch = max(2, min(INFER_CROP_H, CAPTURE_HEIGHT)) & ~1
+    x0 = ((CAPTURE_WIDTH - cw) // 2) & ~1
+    y0 = (CAPTURE_HEIGHT - ch) // 2 + INFER_CROP_Y
+    y0 = max(0, min(y0, CAPTURE_HEIGHT - ch)) & ~1
     return x0, y0, x0 + cw, y0 + ch
 
 
@@ -330,8 +352,8 @@ def _infer_tail(nvmm: bool, decode: str = "") -> str:
     elif rect:
         x0, y0, x1, y1 = rect
         # videocrop takes COUNTS, the opposite convention to nvvidconv above.
-        scale = (f"videoconvert ! videocrop left={x0} right={RECORD_WIDTH - x1} "
-                 f"top={y0} bottom={RECORD_HEIGHT - y1} "
+        scale = (f"videoconvert ! videocrop left={x0} right={CAPTURE_WIDTH - x1} "
+                 f"top={y0} bottom={CAPTURE_HEIGHT - y1} "
                  f"! video/x-raw,format=BGR")
     else:
         scale = (f"videoconvert ! videoscale ! video/x-raw,format=BGR,"
@@ -405,8 +427,23 @@ def _profiles() -> list[tuple[str, str]]:
         # buffers out of NVMM into system memory. The NVENC chain already starts
         # with nvvidconv and stays in NVMM, so it needs no help.
         enc = encoder
+        # Capture may be larger than the recorded size (4K sensor readout for
+        # inference, 1080p footage). Scale it back BEFORE the encoder: this
+        # board has no NVENC, so handing 4K to a software encoder would not
+        # merely be slow, it would fail to keep up and drop the recording.
+        downscale = (CAPTURE_WIDTH, CAPTURE_HEIGHT) != (RECORD_WIDTH, RECORD_HEIGHT)
         if nvmm and encoder.startswith("videoconvert"):
-            enc = f"nvvidconv ! video/x-raw,format=I420 ! {encoder}"
+            # nvvidconv does the scale on the GPU on the way out of NVMM, so
+            # the resize is free — it was going to make this copy anyway.
+            size = (f",width={RECORD_WIDTH},height={RECORD_HEIGHT}"
+                    if downscale else "")
+            enc = f"nvvidconv ! video/x-raw,format=I420{size} ! {encoder}"
+        elif nvmm and downscale:
+            enc = (f"nvvidconv ! video/x-raw(memory:NVMM),format=NV12,"
+                   f"width={RECORD_WIDTH},height={RECORD_HEIGHT} ! {encoder}")
+        elif downscale:
+            enc = (f"videoscale ! video/x-raw,"
+                   f"width={RECORD_WIDTH},height={RECORD_HEIGHT} ! {encoder}")
         candidates.append((name, (
             f"{source} ! tee name=t "
             f"t. ! queue max-size-buffers=8 ! {enc} ! {_record_tail()} "
@@ -426,8 +463,12 @@ def _profiles() -> list[tuple[str, str]]:
     usb_h264 = f"v4l2src device={dev} io-mode=2 ! video/x-h264,width={w},height={h},framerate={fps}/1"
     usb_mjpg = f"v4l2src device={dev} io-mode=2 ! image/jpeg,width={w},height={h},framerate={fps}/1"
     usb_raw  = f"v4l2src device={dev} io-mode=2 ! video/x-raw,width={w},height={h},framerate={fps}/1"
-    csi         = csi_source_description(w, h, fps)
-    csi_untuned = csi_source_description(w, h, fps, tuned=False)
+    # CSI captures at CAPTURE_*; the USB rungs stay at the record size, since a
+    # webcam's H.264 rung is already encoded and cannot be rescaled without a
+    # decode/re-encode round trip that defeats the point of taking it verbatim.
+    csi         = csi_source_description(CAPTURE_WIDTH, CAPTURE_HEIGHT, fps)
+    csi_untuned = csi_source_description(CAPTURE_WIDTH, CAPTURE_HEIGHT, fps,
+                                         tuned=False)
 
     def csi_profiles():
         """Two rungs, not one.
@@ -527,8 +568,13 @@ class Recorder:
         for name, description in profiles:
             if self._try_profile(name, description):
                 self._profile = name
+                capture = ""
+                if (CAPTURE_WIDTH, CAPTURE_HEIGHT) != (RECORD_WIDTH, RECORD_HEIGHT):
+                    capture = (f" (captured {CAPTURE_WIDTH}x{CAPTURE_HEIGHT}, "
+                               f"scaled for encode)")
                 log.info(f"Recording started — profile={name} {RECORD_WIDTH}x{RECORD_HEIGHT}@"
-                         f"{RECORD_FPS} {RECORD_BITRATE // 1000}kbps segments={SEGMENT_S}s")
+                         f"{RECORD_FPS} {RECORD_BITRATE // 1000}kbps "
+                         f"segments={SEGMENT_S}s{capture}")
                 # The inference window decides what the detector can possibly
                 # see. Log it either way: "the sign was outside the crop" and
                 # "the sign was too small" look identical from the outside.
@@ -537,7 +583,8 @@ class Recorder:
                     x0, y0, x1, y1 = rect
                     log.info(f"Inference window: native crop {x1 - x0}x{y1 - y0} "
                              f"at ({x0},{y0}) — no rescale, "
-                             f"{100 * (x1 - x0) // RECORD_WIDTH}% of frame width")
+                             f"{100 * (x1 - x0) // CAPTURE_WIDTH}% of the "
+                             f"{CAPTURE_WIDTH}x{CAPTURE_HEIGHT} sensor frame")
                 else:
                     log.info(f"Inference window: full frame scaled to "
                              f"{INFER_WIDTH}x{INFER_HEIGHT}")
