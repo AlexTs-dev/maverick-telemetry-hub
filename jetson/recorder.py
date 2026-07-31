@@ -43,6 +43,18 @@ Config (all env, all optional):
     VISION_RECORD_WIDTH/HEIGHT/FPS/BITRATE
     VISION_RECORD_SEGMENT_S       segment length, seconds (default 60)
     MAVERICK_DASHCAM_RETENTION_DAYS / _MAX_BYTES / _MIN_FREE_BYTES
+
+CSI image tuning (Argus only — USB profiles are untouched by all of these).
+See CAMERA-TUNING.md for what to change and how to tell whether it helped:
+    VISION_CSI_TUNING             0/1 master switch (default 1)
+    VISION_CSI_EXPOSURE_MAX_US    shutter cap, microseconds (default 4000 = 1/250s)
+    VISION_CSI_EXPOSURE_MIN_US    default 13
+    VISION_CSI_GAIN_MAX           analog gain ceiling (default 16)
+    VISION_CSI_ISP_GAIN_MAX       digital gain ceiling (default 8)
+    VISION_CSI_TNR_MODE           temporal noise reduction (default 0 = off)
+    VISION_CSI_EE_MODE            edge enhancement (default 0 = off)
+    VISION_CSI_AEANTIBANDING      default 0 = off; see the note by the constants
+    VISION_CSI_SENSOR_MODE        -1 = let Argus choose (default)
 """
 
 import logging
@@ -88,6 +100,33 @@ RECORD_HEIGHT  = _env_int("VISION_RECORD_HEIGHT", 1080)
 RECORD_FPS     = _env_int("VISION_RECORD_FPS", 30)
 RECORD_BITRATE = _env_int("VISION_RECORD_BITRATE", 8_000_000)
 SEGMENT_S      = _env_int("VISION_RECORD_SEGMENT_S", 60)
+
+# --- CSI (Argus) image tuning ----------------------------------------------
+#
+# An unconfigured nvarguscamerasrc is wrong for a dashcam. Its defaults suit a
+# camera sitting still in a room: auto-exposure will pick 1/30s in overcast
+# light or a tunnel, and temporal noise reduction blends consecutive frames.
+# Both look fine on a static scene and both smear a moving one — so the sign
+# detector gets unreadable frames at exactly the moment a sign passes, which is
+# the only moment that matters. See CAMERA-TUNING.md.
+#
+# Capping exposure is a REAL TRADE, not a free win: a shorter shutter costs
+# noise, because AE compensates with gain. Taken deliberately — a noisy sharp
+# frame can be read, a clean smeared one cannot.
+#
+# aeantibanding is OFF for a subtler reason. Antibanding quantises exposure to
+# multiples of the mains period (1/100s or 1/120s) so fluorescent lighting does
+# not band, which would put an 8.3ms floor under a 4ms cap and silently undo it.
+# There is no mains lighting on a road.
+CSI_TUNING          = _env_flag("VISION_CSI_TUNING", "1")
+CSI_EXPOSURE_MIN_US = _env_int("VISION_CSI_EXPOSURE_MIN_US", 13)    # sensor floor
+CSI_EXPOSURE_MAX_US = _env_int("VISION_CSI_EXPOSURE_MAX_US", 4000)  # 1/250 s
+CSI_GAIN_MAX        = _env_int("VISION_CSI_GAIN_MAX", 16)           # analog, sensor
+CSI_ISP_GAIN_MAX    = _env_int("VISION_CSI_ISP_GAIN_MAX", 8)        # digital, brightens noise
+CSI_TNR_MODE        = _env_int("VISION_CSI_TNR_MODE", 0)            # 0 off, 1 fast, 2 quality
+CSI_EE_MODE         = _env_int("VISION_CSI_EE_MODE", 0)             # edge enhance, same scale
+CSI_AEANTIBANDING   = _env_int("VISION_CSI_AEANTIBANDING", 0)       # 0 off, 1 auto, 2 50Hz, 3 60Hz
+CSI_SENSOR_MODE     = _env_int("VISION_CSI_SENSOR_MODE", -1)        # -1 = let Argus choose
 
 # Frames handed to the classifier. Downscaled here so the YOLO input is
 # unchanged by recording at 1080p — inference cost must not rise.
@@ -231,6 +270,53 @@ def _infer_tail(nvmm: bool, decode: str = "") -> str:
             f"! appsink name=infersink drop=true max-buffers=1 sync=false")
 
 
+def _csi_tuning_props() -> str:
+    """nvarguscamerasrc properties for a camera bolted to a moving vehicle.
+
+    Exposure is nanoseconds at the element but microseconds in the env vars: the
+    useful range here is 13µs–4ms, and nine trailing zeros is an excellent way to
+    ship a 4-second shutter by typo.
+
+    TNR and edge enhancement are both off. They are ISP post-processing that
+    trades real detail for a nicer-looking picture — TNR by blending across
+    frames (ghosting anything that moves), EE by drawing halos at edges the
+    optics did not actually resolve. A detector wants the optical truth; a human
+    watching footage back may prefer otherwise, hence both are env-tunable.
+    """
+    props = [
+        f'exposuretimerange="{CSI_EXPOSURE_MIN_US * 1000} {CSI_EXPOSURE_MAX_US * 1000}"',
+        f'gainrange="1 {CSI_GAIN_MAX}"',
+        f'ispdigitalgainrange="1 {CSI_ISP_GAIN_MAX}"',
+        f"tnr-mode={CSI_TNR_MODE}",
+        f"ee-mode={CSI_EE_MODE}",
+        f"aeantibanding={CSI_AEANTIBANDING}",
+    ]
+    if CSI_SENSOR_MODE >= 0:
+        # Left unset, Argus picks a mode to satisfy the requested caps and may
+        # choose a binned or cropped readout without saying so — same resolution
+        # out, different sharpness and a different field of view. Pin it once
+        # you have compared them; `focus_assist.py --list-modes` lists them.
+        props.append(f"sensor-mode={CSI_SENSOR_MODE}")
+    return " ".join(props)
+
+
+def csi_source_description(width: int, height: int, fps: int, tuned: bool = True) -> str:
+    """The CSI source chain, up to but not including the tee.
+
+    Public on purpose: focus_assist.py measures focus through the same ISP
+    settings the recorder runs with, because sharpness measured through a
+    different pipeline is not the sharpness the detector will be handed.
+    """
+    props = f" {_csi_tuning_props()}" if tuned and CSI_TUNING else ""
+    src = (f"nvarguscamerasrc{props} ! video/x-raw(memory:NVMM),width={width},"
+           f"height={height},framerate={fps}/1,format=NV12")
+    if CSI_FLIP:
+        # Stays in NVMM, so the profile's nvmm=True contract still holds.
+        src += (f" ! nvvidconv flip-method={CSI_FLIP} "
+                f"! video/x-raw(memory:NVMM),format=NV12")
+    return src
+
+
 def _profiles() -> list[tuple[str, str]]:
     """[(name, complete pipeline description), ...] in preference order."""
     w, h, fps, dev = RECORD_WIDTH, RECORD_HEIGHT, RECORD_FPS, RECORD_DEVICE
@@ -269,19 +355,29 @@ def _profiles() -> list[tuple[str, str]]:
     usb_h264 = f"v4l2src device={dev} io-mode=2 ! video/x-h264,width={w},height={h},framerate={fps}/1"
     usb_mjpg = f"v4l2src device={dev} io-mode=2 ! image/jpeg,width={w},height={h},framerate={fps}/1"
     usb_raw  = f"v4l2src device={dev} io-mode=2 ! video/x-raw,width={w},height={h},framerate={fps}/1"
-    csi      = (f"nvarguscamerasrc ! video/x-raw(memory:NVMM),width={w},height={h},"
-                f"framerate={fps}/1,format=NV12")
-    if CSI_FLIP:
-        # Stays in NVMM, so the profile's nvmm=True contract still holds.
-        csi += (f" ! nvvidconv flip-method={CSI_FLIP} "
-                f"! video/x-raw(memory:NVMM),format=NV12")
+    csi         = csi_source_description(w, h, fps)
+    csi_untuned = csi_source_description(w, h, fps, tuned=False)
+
+    def csi_profiles():
+        """Two rungs, not one.
+
+        Argus rejects a property it cannot honour — an exposure range outside
+        what the chosen sensor mode supports, a sensor-mode absent from this
+        device tree — by failing the pipeline at PLAYING, and with
+        VISION_RECORD_SOURCE=csi that is the only candidate. Tuning improves the
+        picture; recording at all is the feature. So untuned CSI sits directly
+        underneath, and a bad env value costs image quality rather than footage.
+        """
+        raw_profile("csi", csi, True)
+        if csi_untuned != csi:
+            raw_profile("csi-untuned", csi_untuned, True)
 
     if RECORD_SOURCE == "test":
         raw_profile("test", f"videotestsrc is-live=true ! video/x-raw,width={w},height={h},"
                             f"framerate={fps}/1", False)
         return candidates
     if RECORD_SOURCE == "csi":
-        raw_profile("csi", csi, True)
+        csi_profiles()
         return candidates
 
     # Cheapest first.
@@ -292,7 +388,7 @@ def _profiles() -> list[tuple[str, str]]:
         raw_profile("usb-mjpg-sw", f"{usb_mjpg} ! jpegdec", False)
     raw_profile("usb-raw", usb_raw, False)
     if RECORD_SOURCE != "usb":
-        raw_profile("csi", csi, True)
+        csi_profiles()
     return candidates
 
 # ---------------------------------------------------------------------------

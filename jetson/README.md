@@ -26,6 +26,8 @@ metadata and streams the bytes over HTTP on demand — video is never put on MQT
 | `clip_server.py` | Read-only HTTP server with Range support, so footage can be seeked |
 | `classifier.py` | Temporal gating (K-of-M confirmation) over raw model output |
 | `speed_limit_model.py` | Two-stage YOLO: sign detector + value classifier |
+| `focus_assist.py` | Live sharpness/exposure meter for setting the manual lens over SSH |
+| `CAMERA-TUNING.md` | **Blurry frames?** Diagnosis and fix procedure — start there |
 | `requirements.txt` | Dev-machine deps (see Jetson venv note below) |
 | `deploy/bootstrap.sh` | **One-shot provisioning** — bare Jetson to running publisher |
 | `deploy/vision_publisher.service` | systemd unit (installed on the Jetson) |
@@ -106,6 +108,32 @@ Nothing touches the CPU. **Prefer a UVC camera with onboard H.264** (Logitech
 C920/C922 and most business webcams). Otherwise recording falls back to
 `openh264enc`, which keeps up at 1080p30 but competes with YOLO for six cores in
 a thermally constrained cab.
+
+### CSI image tuning — the defaults are wrong for a moving vehicle
+
+An unconfigured `nvarguscamerasrc` suits a camera sitting still in a room:
+auto-exposure will choose 1/30s in overcast light or a tunnel, and temporal noise
+reduction blends consecutive frames. Both look fine on a static scene and both
+smear a moving one — so the sign detector gets unreadable frames at exactly the
+moment a sign passes, which is the only moment that matters.
+
+`recorder.py` therefore caps the shutter at 1/250s, disables TNR and edge
+enhancement, and turns `aeantibanding` off (it quantises exposure to the mains
+period, putting an 8.3ms floor under a 4ms cap). This is a deliberate trade of
+noise for sharpness: a noisy sharp frame can be read, a clean smeared one cannot.
+
+**USB profiles are untouched by all of this** — it is Argus-only. The ladder
+carries a `csi-untuned` rung directly beneath the tuned one, so a value Argus
+rejects costs image quality rather than footage.
+
+Everything is overridable in `~/.maverick-env`; `VISION_CSI_TUNING=0` restores
+stock behaviour without a code change. **See
+[CAMERA-TUNING.md](CAMERA-TUNING.md)** for the full variable list, and for the
+procedure to tell defocus from motion blur from a plain lack of pixels on
+target — they all present as "blurry" and have three different fixes.
+
+`focus_assist.py` is the instrument for that: a live sharpness meter you can run
+over SSH to set a manual lens, since the IMX477 has no autofocus.
 
 ### Fragmented MP4 is not optional — and it is set inline
 

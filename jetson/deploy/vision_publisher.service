@@ -52,6 +52,23 @@ Environment=MAVERICK_DASHCAM_ROOT=/var/lib/maverick-dashcam
 # Environment=MAVERICK_DASHCAM_MAX_BYTES=128849018880       # 120 GiB
 # Environment=MAVERICK_DASHCAM_MIN_FREE_BYTES=10737418240   # 10 GiB
 
+# CSI (Argus) image tuning. Applied by recorder.py to nvarguscamerasrc only —
+# USB profiles are unaffected. The shipped defaults cap the shutter at 1/250s
+# and disable TNR/edge-enhancement, because Argus defaults smear a moving scene
+# and the sign detector then gets unreadable frames exactly when a sign passes.
+# Trading noise for sharpness is deliberate. See jetson/CAMERA-TUNING.md.
+# Override per device in ~/.maverick-env, not here.
+# Environment=VISION_CSI_TUNING=1                 # 0 restores stock Argus behaviour
+# Environment=VISION_CSI_EXPOSURE_MAX_US=4000     # 1/250s; 2000 = 1/500s
+# Environment=VISION_CSI_EXPOSURE_MIN_US=13
+# Environment=VISION_CSI_GAIN_MAX=16
+# Environment=VISION_CSI_ISP_GAIN_MAX=8
+# Environment=VISION_CSI_TNR_MODE=0               # 0 off, 1 fast, 2 quality
+# Environment=VISION_CSI_EE_MODE=0                # edge enhancement, same scale
+# Environment=VISION_CSI_AEANTIBANDING=0          # 0 off, 1 auto, 2 50Hz, 3 60Hz
+# Environment=VISION_CSI_SENSOR_MODE=-1           # -1 = let Argus choose
+# Environment=VISION_CSI_FLIP=0                   # 2 = 180deg, inverted mount
+
 # Per-device overrides, e.g. when the Jetson reaches the Pi over WiFi instead of
 # the direct ethernet link. Listed AFTER the Environment= lines so it wins.
 # The leading '-' makes it optional. This file is NOT in git, so a device-
